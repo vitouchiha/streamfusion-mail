@@ -312,15 +312,20 @@ async function _extractStreamAndSubs(serieId, episodeId) {
         return;
       }
       const u = req.url();
-      // Intercept HLS stream with v param
-      if (!streamUrl && /^https:\/\/.*\.m3u8/.test(u) && /[?&]v=[a-zA-Z0-9]+/.test(u)) {
+      const rt2 = req.resourceType();
+      // Log XHR/fetch to debug what endpoints are called
+      if (!streamUrl && (rt2 === 'xhr' || rt2 === 'fetch' || u.includes('.m3u8') || u.includes('stream') || u.includes('video'))) {
+        log.debug(`[intercept] ${rt2} ${u.slice(0, 120)}`);
+      }
+      // Intercept ANY HLS stream URL (not just ?v= format — format may have changed)
+      if (!streamUrl && /\.m3u8/i.test(u)) {
         streamUrl = u;
-        log.info(`intercepted stream: ${u.slice(0, 100)}`);
+        log.info(`intercepted stream: ${u.slice(0, 120)}`);
       }
       // Intercept subtitle API endpoint
       if (!subApiUrl && u.includes('/api/Sub/')) {
         subApiUrl = u;
-        log.debug(`intercepted sub API: ${u.slice(0, 100)}`);
+        log.debug(`intercepted sub API: ${u.slice(0, 120)}`);
       }
       req.continue().catch(() => {});
     });
@@ -329,7 +334,16 @@ async function _extractStreamAndSubs(serieId, episodeId) {
     log.info('navigating to episode page', { targetUrl });
 
     // Use 'load' + manual wait so we can exit early once both URLs found
-    await page.goto(targetUrl, { waitUntil: 'load', timeout: MAX_WAIT }).catch(() => {});
+    await page.goto(targetUrl, { waitUntil: 'load', timeout: MAX_WAIT }).catch((e) => {
+      log.warn(`page.goto warning: ${e.message.slice(0, 80)}`);
+    });
+
+    // Log actual URL + title to verify we're on the right page (not a CF challenge)
+    try {
+      const finalUrl = page.url();
+      const title = await page.title().catch(() => '');
+      log.info('page loaded', { finalUrl: finalUrl.slice(0, 100), title: title.slice(0, 60) });
+    } catch (_) {}
 
     // Poll until both found or timeout
     const deadline = Date.now() + MAX_WAIT;
