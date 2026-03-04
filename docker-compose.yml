@@ -1,24 +1,28 @@
-# ── StreamFusion Mail — Docker Compose ──────────────────────────────────────
+# ── StreamFusion Mail — Docker Compose (Mini PC) ────────────────────────────
+#
+# Questo stack gira sul Mini PC e serve come PROXY VPN per Vercel.
 #
 # Architettura:
-#   gluetun (WireGuard VPN) → streamfusion-mail usa network_mode: service:gluetun
 #
-# Tutto il traffico dell'addon (richieste a kisskh.co e ramaorientalfansub.live)
-# esce con l'IP della VPN → kisskh serve sottotitoli in base alla nazione VPN.
+#   [Vercel serverless]
+#        │  PROXY_URL=http://user:pass@TUO_IP_PUBBLICO:8118
+#        ▼
+#   [gost-proxy :8118]  ← network_mode: service:gluetun
+#        │  tutto il traffico esce dall'IP italiano WireGuard
+#        ▼
+#   [Gluetun WireGuard VPN]
+#        │
+#        ▼
+#   kisskh.co / ramaorientalfansub.live  ✅ (non vedono IP Vercel/AWS)
 #
 # Uso:
-#   1. Copia stack.env.example → stack.env e compila le credenziali WireGuard
+#   1. Copia stack.env.example → stack.env con credenziali WireGuard + proxy auth
 #   2. docker compose --env-file stack.env up -d
-#   3. Addon disponibile su http://localhost:3000/manifest.json
-#
-# Per accesso remoto (Stremio da un altro dispositivo):
-#   Esponi la porta 3000 sul router/firewall, oppure usa un reverse proxy (Nginx, Caddy).
+#   3. Apri porta 8118 sul router (NAT → IP Mini PC)
+#   4. In Vercel: imposta PROXY_URL=http://PROXY_USER:PROXY_PASS@TUO_IP_PUBBLICO:8118
+#   5. vercel env pull && vercel --yes --prod
 
 version: "3.9"
-
-networks:
-  vpn-net:
-    driver: bridge
 
 volumes:
   gluetun-config:
@@ -45,18 +49,14 @@ services:
       - WIREGUARD_PRESHARED_KEY=${WIREGUARD_PRESHARED_KEY}
       - WIREGUARD_ALLOWED_IPS=0.0.0.0/0,::/0
       - WIREGUARD_PERSISTENT_KEEPALIVE=25
-      # Porta inbound attraverso il tunnel VPN (per raggiungere l'addon da remoto via VPN)
-      - FIREWALL_VPN_INPUT_PORTS=3000
-      # Permette connessioni dalla rete locale al container
-      - FIREWALL_INPUT_PORTS=3000
+      # Porta proxy esposta su internet (inbound)
+      - FIREWALL_INPUT_PORTS=8118
     ports:
-      # Porta 3000 esposta localmente (l'addon usa la rete di gluetun → la porta va qui)
-      - "3000:3000/tcp"
+      # Porta proxy HTTP — forwardarla sul router verso questo Mini PC
+      - "8118:8118/tcp"
     volumes:
       - gluetun-config:/gluetun
     restart: unless-stopped
-    networks:
-      - vpn-net
     healthcheck:
       test: wget -qO- https://ipinfo.io/ip || exit 1
       interval: 30s
@@ -64,40 +64,19 @@ services:
       retries: 5
       start_period: 30s
 
-  # ── StreamFusion Mail Addon ──────────────────────────────────────────────
-  streamfusion-mail:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    container_name: streamfusion-mail
-    restart: unless-stopped
-    # !! IMPORTANTE: usa la rete di gluetun — tutto il traffico esce dalla VPN
+  # ── Gost HTTP Proxy (usa la rete VPN di Gluetun) ─────────────────────────
+  # Tutto il traffico in uscita da questo proxy esce con l'IP italiano WireGuard.
+  # Vercel invia le richieste qui → forward verso kisskh.co con IP italiano.
+  gost-proxy:
+    image: ginuerzh/gost:2.12
+    container_name: streamfusion-proxy
+    # IMPORTANTE: condivide la rete con gluetun → traffico esce dalla VPN
     network_mode: "service:gluetun"
     depends_on:
       gluetun:
         condition: service_healthy
-    environment:
-      - NODE_ENV=production
-      - PORT=3000
-      - LOG_LEVEL=info
-      # Puppeteer usa Chromium di sistema (installato nel Dockerfile)
-      - PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true
-      - PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium
-      # Timeouts (ms) — aumentati rispetto a Vercel, nessun limite di 10s
-      - CATALOG_TIMEOUT=20000
-      - META_TIMEOUT=30000
-      - STREAM_TIMEOUT=60000
-      # Cloudflare cookie caching
-      - CF_COOKIE_MAX_AGE=3600000
-      - CF_MAX_RETRY=3
-      - CF_RETRY_DELAY=5000
-      # Cache
-      - CACHE_TTL=3600
-      - ENABLE_GARBAGE_COLLECTION=true
-      - GC_INTERVAL=300000
-    volumes:
-      # Persistenza cookie CF e cache su disco
-      - ./data:/app/data
-      - ./cache:/app/cache
-    mem_limit: 768m
-    cpus: "1.0"
+    # HTTP proxy con autenticazione (cambia user/pass in stack.env)
+    command: >
+      -L "http://${PROXY_USER}:${PROXY_PASS}@:8118"
+    restart: unless-stopped
+
