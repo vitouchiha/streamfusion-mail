@@ -49,12 +49,10 @@ async function launchBrowser() {
   if (browserlessUrl) {
     log.info('connecting to remote Chrome via BROWSERLESS_URL');
     try {
-      // Connect using puppeteerExtra (not puppeteer-core) so the Stealth plugin
-      // applies its JS-based evasions (evaluateOnNewDocument) to each new page.
-      // These evasions hide navigator.webdriver, fake chrome.runtime, etc.
-      // Launch-time Chrome flags (--disable-blink-features) are NOT applied via connect(),
-      // but JS evasions are the most effective against Cloudflare anyway.
-      const browser = await puppeteerExtra.connect({
+      // Use puppeteer-core.connect() for Browserless.io.
+      // puppeteer-extra.connect() fails on Vercel due to missing stealth evasion sub-modules.
+      const puppeteerCore = require('puppeteer-core');
+      const browser = await puppeteerCore.connect({
         browserWSEndpoint: browserlessUrl,
         defaultViewport: { width: 1280, height: 720 },
       });
@@ -62,6 +60,7 @@ async function launchBrowser() {
       return browser;
     } catch (err) {
       log.error(`remote Chrome connection failed: ${err.message}`);
+
 
 
       throw err;
