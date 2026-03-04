@@ -1,20 +1,21 @@
 'use strict';
 
 /**
- * MediaFlow Proxy integration
- * https://github.com/mhdzumair/mediaflow-proxy
+ * MediaFlow Proxy / HLS Proxy integration
  *
- * Wraps stream and subtitle URLs through a self-hosted MediaFlow Proxy instance.
- * This allows:
- *   - Bypassing IP-based geo-restrictions (Vercel/AWS IPs blocked by CDN)
- *   - Proxying HLS/MPD manifests + segments transparently for Stremio
- *   - Forwarding necessary request headers (Referer, Origin)
+ * Wraps stream and subtitle URLs through a proxy instance.
+ * Compatible with:
+ *   - Standard MediaFlow Proxy (https://github.com/mhdzumair/mediaflow-proxy)
+ *   - Custom HLS Proxy Server (e.g. https://easy.koyeb.app)
  *
- * MFP endpoint mapping:
- *   HLS (.m3u8)  → /proxy/hls/manifest.m3u8?d=URL&api_password=KEY
- *   DASH (.mpd)  → /proxy/mpd/manifest.m3u8?d=URL&api_password=KEY
- *   Direct video → /proxy/stream?d=URL&api_password=KEY
- *   Subtitle     → /proxy/stream?d=URL&api_password=KEY
+ * Endpoint mapping:
+ *   HLS (.m3u8)  → /proxy/hls/manifest.m3u8?d=URL[&api_password=KEY]
+ *   DASH (.mpd)  → /proxy/mpd/manifest.m3u8?d=URL[&api_password=KEY]
+ *   Direct video → /proxy/hls/manifest.m3u8?d=URL  (pass-through on custom proxy)
+ *   Subtitle     → /proxy/hls/manifest.m3u8?d=URL
+ *
+ * Note: /proxy/stream is NOT used because custom HLS proxies return 404 for it.
+ *       /proxy/hls/manifest.m3u8 works universally: proxies HLS and passes through MP4.
  */
 
 /**
@@ -34,13 +35,14 @@ function wrapStreamUrl(url, config, fwdHeaders = {}) {
   if (fwdHeaders['Referer']) params.set('h_referer', fwdHeaders['Referer']);
   if (fwdHeaders['Origin'])  params.set('h_origin',  fwdHeaders['Origin']);
 
-  if (/\.m3u8(\?|$)/i.test(url) || /\/hls\//i.test(url)) {
-    return `${base}/proxy/hls/manifest.m3u8?${params}`;
-  }
   if (/\.mpd(\?|$)/i.test(url)) {
     return `${base}/proxy/mpd/manifest.m3u8?${params}`;
   }
-  return `${base}/proxy/stream?${params}`;
+  // Use /proxy/hls/manifest.m3u8 universally:
+  //   - properly proxies HLS (.m3u8) playlists + segments
+  //   - passes through direct MP4/video files (content-type: video/mp4)
+  //   - compatible with both standard MFP and custom HLS proxy servers
+  return `${base}/proxy/hls/manifest.m3u8?${params}`;
 }
 
 /**
@@ -54,7 +56,7 @@ function wrapSubUrl(url, config) {
   const base   = config.mfpUrl.replace(/\/$/, '');
   const params = new URLSearchParams({ d: url });
   if (config.mfpKey) params.set('api_password', config.mfpKey);
-  return `${base}/proxy/stream?${params}`;
+  return `${base}/proxy/hls/manifest.m3u8?${params}`;
 }
 
 module.exports = { wrapStreamUrl, wrapSubUrl };
