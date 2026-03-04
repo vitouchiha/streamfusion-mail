@@ -19,7 +19,7 @@ const { getCloudflareCookie } = require('../utils/cloudflare');
 const { decryptKisskhSubtitleFull, decryptKisskhSubtitleStatic } = require('../utils/subDecrypter');
 const { TTLCache } = require('../utils/cache');
 const { cleanTitleForSearch, titleSimilarity, extractEpisodeNumericId } = require('../utils/titleHelper');
-const { withTimeout } = require('../utils/fetcher');
+const { withTimeout, getProxyAgent } = require('../utils/fetcher');
 const { createLogger } = require('../utils/logger');
 
 const log = createLogger('kisskh');
@@ -57,8 +57,10 @@ async function _headers() {
  * @returns {Promise<any|null>}
  */
 async function _apiGet(url, timeout = 8_000) {
+  const proxyAgent = getProxyAgent();
+  const proxyConfig = proxyAgent ? { httpsAgent: proxyAgent, httpAgent: proxyAgent, proxy: false } : {};
   try {
-    const { data } = await axios.get(url, { headers: _baseHeaders(), timeout });
+    const { data } = await axios.get(url, { headers: _baseHeaders(), timeout, ...proxyConfig });
     return data;
   } catch (err) {
     const status = err?.response?.status;
@@ -66,7 +68,7 @@ async function _apiGet(url, timeout = 8_000) {
     // Always retry with CF cookie on any failure
     try {
       const headers = await _headers();
-      const { data } = await axios.get(url, { headers, timeout });
+      const { data } = await axios.get(url, { headers, timeout, ...proxyConfig });
       return data;
     } catch (err2) {
       log.error(`API call failed even with CF cookie: ${err2.message}`, { url });

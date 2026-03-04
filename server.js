@@ -116,7 +116,10 @@ app.get('/health', (req, res) => {
 // Debug endpoint — tests provider reachability (remove in production)
 app.get('/debug/providers', async (req, res) => {
   const axios = require('axios');
-  const results = {};
+  const { getProxyAgent } = require('./src/utils/fetcher');
+  const proxyAgent = getProxyAgent();
+  const proxyConfig = proxyAgent ? { httpsAgent: proxyAgent, httpAgent: proxyAgent, proxy: false } : {};
+  const results = { proxyConfigured: !!process.env.PROXY_URL };
   const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
 
   // Test kisskh API
@@ -125,6 +128,7 @@ app.get('/debug/providers', async (req, res) => {
     const r = await axios.get('https://kisskh.co/api/DramaList/List?page=1&type=1&sub=0&country=2&status=2&order=3&pageSize=5', {
       headers: { 'User-Agent': UA, 'Accept': 'application/json', 'Referer': 'https://kisskh.co/' },
       timeout: 8000,
+      ...proxyConfig,
     });
     results.kisskh = { ok: true, status: r.status, count: r.data?.data?.length ?? '?', ms: Date.now() - t0 };
   } catch (e) {
@@ -137,6 +141,7 @@ app.get('/debug/providers', async (req, res) => {
     const r = await axios.get('https://ramaorientalfansub.live/', {
       headers: { 'User-Agent': UA },
       timeout: 8000,
+      ...proxyConfig,
     });
     results.rama = { ok: true, status: r.status, ms: Date.now() - t0 };
   } catch (e) {

@@ -6,6 +6,13 @@
  *   - fetchWithCloudscraper(): for sites behind Cloudflare (ramaorientalfansub.live)
  *   - fetchWithAxios():        for plain HTTPS endpoints (kisskh.co API)
  *   - withTimeout():           generic promise timeout wrapper
+ *   - getProxyAgent():         returns HttpsProxyAgent if PROXY_URL env is set
+ *
+ * Proxy support:
+ *   Set PROXY_URL env variable to a proxy URL, e.g.:
+ *   - http://user:pass@host:port
+ *   - socks5://user:pass@host:port
+ *   This is required when deploying on Vercel/AWS (IPs blocked by Cloudflare on target sites).
  */
 
 const cloudscraper = require('cloudscraper');
@@ -13,6 +20,30 @@ const axios = require('axios');
 const { createLogger } = require('./logger');
 
 const log = createLogger('fetcher');
+
+// ─── Proxy support ────────────────────────────────────────────────────────────
+
+let _proxyAgent = null;
+let _proxyUrl = null;
+
+function getProxyAgent() {
+  const proxyUrl = process.env.PROXY_URL;
+  if (!proxyUrl) return null;
+  if (_proxyAgent && _proxyUrl === proxyUrl) return _proxyAgent;
+
+  try {
+    const { HttpsProxyAgent } = require('https-proxy-agent');
+    _proxyAgent = new HttpsProxyAgent(proxyUrl);
+    _proxyUrl = proxyUrl;
+    log.info('Proxy configured', { url: proxyUrl.replace(/:[^:@]+@/, ':***@') });
+    return _proxyAgent;
+  } catch (e) {
+    log.warn('https-proxy-agent not available, proxy disabled');
+    return null;
+  }
+}
+
+// ─── User agents ─────────────────────────────────────────────────────────────
 
 const USER_AGENTS = [
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
@@ -37,10 +68,11 @@ function randomUA() {
  * @returns {Promise<string|null>}
  */
 async function fetchWithCloudscraper(url, { retries = 3, timeout = 12_000, retryDelay = 2_000, referer } = {}) {
+  const proxyUrl = process.env.PROXY_URL || null;
   for (let attempt = 1; attempt <= retries; attempt++) {
     try {
       log.debug(`Attempt ${attempt}/${retries} — ${url}`);
-      const response = await cloudscraper.get({
+      const reqOpts = {
         uri: url,
         headers: {
           'User-Agent': randomUA(),
@@ -56,7 +88,10 @@ async function fetchWithCloudscraper(url, { retries = 3, timeout = 12_000, retry
         maxRedirects: 3,
         timeout,
         resolveWithFullResponse: true,
-      });
+      };
+      if (proxyUrl) reqOpts.proxy = proxyUrl;
+
+      const response = await cloudscraper.get(reqOpts);
 
       if (response.statusCode === 404) {
         log.warn(`404 not found — ${url}`);
@@ -79,7 +114,7 @@ async function fetchWithCloudscraper(url, { retries = 3, timeout = 12_000, retry
 }
 
 /**
- * Fetch JSON / text via axios.
+ * Fetch JSON / text via axios (proxy-aware).
  * @param {string} url
  * @param {object} [opts]
  * @param {object} [opts.headers]
@@ -94,9 +129,15 @@ async function fetchWithAxios(url, { headers = {}, timeout = 10_000, responseTyp
     'Accept': 'application/json, text/plain, */*',
     ...headers,
   };
+  const proxyAgent = getProxyAgent();
   for (let attempt = 1; attempt <= retries; attempt++) {
     try {
-      const { data } = await axios.get(url, { headers: mergedHeaders, timeout, responseType });
+      const { data } = await axios.get(url, {
+        headers: mergedHeaders,
+        timeout,
+        responseType,
+        ...(proxyAgent ? { httpsAgent: proxyAgent, httpAgent: proxyAgent, proxy: false } : {}),
+      });
       return data;
     } catch (err) {
       log.warn(`axios attempt ${attempt}/${retries}: ${err.message}`, { url });
@@ -128,4 +169,4 @@ function _sleep(ms) {
   return new Promise(r => setTimeout(r, ms));
 }
 
-module.exports = { fetchWithCloudscraper, fetchWithAxios, withTimeout, randomUA };
+module.exports = { fetchWithCloudscraper, fetchWithAxios, withTimeout, randomUA, getProxyAgent };
