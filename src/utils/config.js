@@ -7,18 +7,24 @@
  *   https://streamfusion-mail.vercel.app/BASE64_CONFIG/manifest.json
  *
  * This lets each user have their own personalised install URL with
- * their MediaFlow Proxy and HTTP proxy settings baked in.
+ * their settings baked in.
  *
  * Short keys to keep URLs compact:
  *   mfp   → MediaFlow Proxy base URL
  *   mfpk  → MediaFlow Proxy API key
  *   px    → HTTP proxy URL (for catalog/meta requests blocked by Cloudflare)
+ *   hc    → hideCatalogs (1 = yes, omit = no)
+ *   pv    → providers: 'a'=all (default), 'k'=kisskh only, 'r'=rama only
+ *   cm    → cinemeta (1 = enable IMDB stream support, omit = no)
  */
 
 const DEFAULT_CONFIG = {
-  mfpUrl:   '',  // e.g. https://mfp.example.com
-  mfpKey:   '',  // e.g. mysecretpassword
-  proxyUrl: '',  // e.g. http://user:pass@host:port
+  mfpUrl:       '',     // e.g. https://mfp.example.com
+  mfpKey:       '',     // e.g. mysecretpassword
+  proxyUrl:     '',     // e.g. http://user:pass@host:port
+  hideCatalogs: false,  // hide addon catalogs from Stremio home
+  providers:    'all',  // 'all' | 'kisskh' | 'rama'
+  cinemeta:     false,  // enable stream lookup for Cinemeta / IMDB IDs
 };
 
 /**
@@ -28,9 +34,12 @@ const DEFAULT_CONFIG = {
  */
 function encodeConfig(config) {
   const obj = {};
-  if (config.mfpUrl)   obj.mfp  = config.mfpUrl.trim();
-  if (config.mfpKey)   obj.mfpk = config.mfpKey.trim();
-  if (config.proxyUrl) obj.px   = config.proxyUrl.trim();
+  if (config.mfpUrl)                    obj.mfp  = config.mfpUrl.trim();
+  if (config.mfpKey)                    obj.mfpk = config.mfpKey.trim();
+  if (config.proxyUrl)                  obj.px   = config.proxyUrl.trim();
+  if (config.hideCatalogs)              obj.hc   = 1;
+  if (config.providers && config.providers !== 'all') obj.pv = config.providers === 'kisskh' ? 'k' : 'r';
+  if (config.cinemeta)                  obj.cm   = 1;
   return Buffer.from(JSON.stringify(obj)).toString('base64url');
 }
 
@@ -43,10 +52,14 @@ function decodeConfig(encoded) {
   if (!encoded) return { ...DEFAULT_CONFIG };
   try {
     const obj = JSON.parse(Buffer.from(encoded, 'base64url').toString('utf8'));
+    const pvMap = { k: 'kisskh', r: 'rama', a: 'all' };
     return {
-      mfpUrl:   (obj.mfp  || '').trim(),
-      mfpKey:   (obj.mfpk || '').trim(),
-      proxyUrl: (obj.px   || '').trim(),
+      mfpUrl:       (obj.mfp  || '').trim(),
+      mfpKey:       (obj.mfpk || '').trim(),
+      proxyUrl:     (obj.px   || '').trim(),
+      hideCatalogs: !!obj.hc,
+      providers:    pvMap[obj.pv] || 'all',
+      cinemeta:     !!obj.cm,
     };
   } catch {
     return { ...DEFAULT_CONFIG };

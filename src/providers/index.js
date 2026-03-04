@@ -10,23 +10,27 @@
  * ID prefixes:
  *   "kisskh_*"  → KissKH provider   (type: series)
  *   "rama_*"    → Rama provider     (type: kdrama)
+ *   "tt*"       → Cinemeta IMDB ID  (search both providers by title)
  *
  * Catalog IDs:
  *   "kisskh_catalog"  → KissKH
  *   "rama_catalog"    → Rama
  */
 
+const axios  = require('axios');
 const kisskh = require('./kisskh');
 const rama   = require('./rama');
 const { withTimeout } = require('../utils/fetcher');
+const { titleSimilarity } = require('../utils/titleHelper');
 const { createLogger } = require('../utils/logger');
 
 const log = createLogger('aggregator');
 
 // Configurable timeouts (ms)
-const CATALOG_TIMEOUT = Number(process.env.CATALOG_TIMEOUT) || 9_000;
-const META_TIMEOUT    = Number(process.env.META_TIMEOUT)    || 30_000;
-const STREAM_TIMEOUT  = Number(process.env.STREAM_TIMEOUT)  || 45_000;
+const CATALOG_TIMEOUT  = Number(process.env.CATALOG_TIMEOUT)  || 9_000;
+const META_TIMEOUT     = Number(process.env.META_TIMEOUT)     || 30_000;
+const STREAM_TIMEOUT   = Number(process.env.STREAM_TIMEOUT)   || 45_000;
+const CINEMETA_TIMEOUT = 5_000;
 
 // ─── Catalog handler ─────────────────────────────────────────────────────────
 
@@ -91,24 +95,30 @@ async function handleMeta(type, id, config = {}) {
 // ─── Stream handler ───────────────────────────────────────────────────────────
 
 /**
- * @param {'series'|'kdrama'} type
- * @param {string} id   May be composite: "kisskh_123:456"
+ * @param {'series'|'kdrama'|'movie'} type
+ * @param {string} id   May be composite: "kisskh_123:456", "tt1234567:1:2"
  * @param {object} [config]
  * @returns {Promise<{streams: Array}>}
  */
 async function handleStream(type, id, config = {}) {
   log.info('stream request', { type, id });
 
-  const results = await Promise.allSettled([
-    _fetchFromProvider(id, type, config),
-  ]);
+  let streams = [];
 
-  const streams = results
-    .filter(r => r.status === 'fulfilled' && Array.isArray(r.value))
-    .flatMap(r => r.value);
+  // Cinemeta / IMDB ID — e.g. "tt1234567:1:1"
+  if (id.startsWith('tt')) {
+    streams = await _fetchFromImdbId(id, type, config);
+  } else {
+    const results = await Promise.allSettled([
+      _fetchFromProvider(id, type, config),
+    ]);
+    streams = results
+      .filter(r => r.status === 'fulfilled' && Array.isArray(r.value))
+      .flatMap(r => r.value);
+  }
 
   // Deduplicate by URL
-  const seen = new Set();
+  const seen   = new Set();
   const unique = streams.filter(s => {
     if (!s.url || seen.has(s.url)) return false;
     seen.add(s.url);
@@ -118,6 +128,136 @@ async function handleStream(type, id, config = {}) {
   log.info(`stream: returning ${unique.length} streams`, { id });
   return { streams: unique };
 }
+
+// ─── Cinemeta / IMDB lookup ───────────────────────────────────────────────────
+
+/**
+ * Given a Cinemeta ID like "tt1234567:1:2" (series, season 1 ep 2) or "tt1234567" (movie),
+ * fetch the title from Cinemeta, search our providers, and return matching streams.
+ */
+async function _fetchFromImdbId(rawId, type, config) {
+  // Parse: "tt1234567"  or  "tt1234567:1:2"
+  const parts     = rawId.split(':');
+  const imdbId    = parts[0];
+  const seasonNum  = parts[1] ? Number(parts[1]) : null;
+  const episodeNum = parts[2] ? Number(parts[2]) : null;
+
+  log.info('Cinemeta lookup', { imdbId, seasonNum, episodeNum, type });
+
+  // 1. Fetch title from Cinemeta
+  let title = null;
+  try {
+    const metaType = type === 'movie' ? 'movie' : 'series';
+    const resp = await axios.get(
+      `https://v3-cinemeta.strem.io/meta/${metaType}/${imdbId}.json`,
+      { timeout: CINEMETA_TIMEOUT }
+    );
+    title = resp.data?.meta?.name;
+  } catch (err) {
+    log.warn(`Cinemeta meta fetch failed: ${err.message}`, { imdbId });
+    return [];
+  }
+  if (!title) {
+    log.warn('no title from Cinemeta', { imdbId });
+    return [];
+  }
+  log.info(`Cinemeta title: "${title}"`, { imdbId });
+
+  // 2. Search providers for the title, respecting `config.providers`
+  const useKisskh = !config.providers || config.providers === 'all' || config.providers === 'kisskh';
+  const useRama   = !config.providers || config.providers === 'all' || config.providers === 'rama';
+
+  const jobs = [];
+  if (useKisskh) jobs.push(_kisskhStreamsForTitle(title, seasonNum, episodeNum, config).catch(e => { log.warn(`kisskh title search failed: ${e.message}`); return []; }));
+  if (useRama)   jobs.push(_ramaStreamsForTitle(title, episodeNum, config).catch(e => { log.warn(`rama title search failed: ${e.message}`); return []; }));
+
+  const results = await Promise.all(jobs);
+  return results.flat();
+}
+
+/**
+ * Search KissKH by title, then get streams for the matching episode.
+ */
+async function _kisskhStreamsForTitle(title, seasonNum, episodeNum, config) {
+  const SEARCH_TIMEOUT = 8_000;
+  const results = await withTimeout(kisskh.getCatalog(0, title, config), SEARCH_TIMEOUT, 'kisskh.search').catch(() => []);
+  if (!results || !results.length) return [];
+
+  // Pick best title match
+  const best = _bestMatch(results, title);
+  if (!best) return [];
+  log.info(`kisskh best match: "${best.name}" (${best.id})`, { title });
+
+  // Get episode list
+  const { meta } = await withTimeout(kisskh.getMeta(best.id, config), META_TIMEOUT, 'kisskh.getMeta').catch(() => ({ meta: null }));
+  if (!meta || !meta.videos || !meta.videos.length) return [];
+
+  // Find matching episode
+  const ep = _matchEpisode(meta.videos, seasonNum, episodeNum);
+  if (!ep) {
+    log.warn(`kisskh: no matching episode s${seasonNum}e${episodeNum} in "${best.name}"`);
+    return [];
+  }
+
+  return withTimeout(kisskh.getStreams(ep.id, config), STREAM_TIMEOUT, 'kisskh.getStreams').catch(() => []);
+}
+
+/**
+ * Search Rama by title, then get streams for the matching episode.
+ */
+async function _ramaStreamsForTitle(title, episodeNum, config) {
+  const SEARCH_TIMEOUT = 8_000;
+  const results = await withTimeout(rama.getCatalog(0, title, config), SEARCH_TIMEOUT, 'rama.search').catch(() => []);
+  if (!results || !results.length) return [];
+
+  const best = _bestMatch(results, title);
+  if (!best) return [];
+  log.info(`rama best match: "${best.name}" (${best.id})`, { title });
+
+  // Get meta + episodes for this series
+  const { meta } = await withTimeout(rama.getMeta(best.id, config), META_TIMEOUT, 'rama.getMeta').catch(() => ({ meta: null }));
+  if (!meta || !meta.videos || !meta.videos.length) return [];
+
+  // Find episode by sequential number (Rama always uses season=1)
+  const ep = _matchEpisode(meta.videos, 1, episodeNum);
+  if (!ep) {
+    log.warn(`rama: no matching episode e${episodeNum} in "${best.name}"`);
+    return [];
+  }
+
+  return withTimeout(rama.getStreams(ep.id, config), STREAM_TIMEOUT, 'rama.getStreams').catch(() => []);
+}
+
+/**
+ * Pick the best-matching meta item from a catalog result by title similarity.
+ */
+function _bestMatch(metas, queryTitle) {
+  let bestScore = 0;
+  let bestItem  = null;
+  for (const m of metas) {
+    const score = titleSimilarity(m.name || m.title || '', queryTitle);
+    if (score > bestScore) { bestScore = score; bestItem = m; }
+  }
+  // Require at least 50% similarity to avoid wild mismatches
+  return bestScore >= 0.5 ? bestItem : null;
+}
+
+/**
+ * Find a video in a videos array by season + episode number.
+ * Falls back to just episode number if season is null.
+ */
+function _matchEpisode(videos, seasonNum, episodeNum) {
+  if (!episodeNum) return videos[0] || null;
+  // Exact match: season + episode
+  if (seasonNum) {
+    const exact = videos.find(v => v.season === seasonNum && v.episode === episodeNum);
+    if (exact) return exact;
+  }
+  // Fallback: just episode number (Korean dramas often have season=1 always)
+  return videos.find(v => v.episode === episodeNum) || null;
+}
+
+// ─── Native-prefix provider dispatch ─────────────────────────────────────────
 
 async function _fetchFromProvider(id, type, config = {}) {
   // Determine provider by ID prefix

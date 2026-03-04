@@ -68,9 +68,38 @@ function stremioJson(res, data) {
 // ─── Stremio Protocol Routes ─────────────────────────────────────────────────
 // Both default (no config prefix) and /:config prefixed variants.
 
+// ─── Manifest builder (config-aware) ─────────────────────────────────────────
+
+/**
+ * Build a Stremio manifest tailored to the user's config.
+ * - hideCatalogs: removes catalogs from the home screen
+ * - providers: filters which provider catalogs appear
+ * - cinemeta: adds "tt" idPrefix + "series"/"movie" types so Cinemeta IDs work
+ */
+function buildManifest(config) {
+  const { hideCatalogs = false, providers = 'all', cinemeta = false } = config || {};
+
+  // Filter catalogs by provider setting
+  let catalogs = manifest.catalogs || [];
+  if (providers === 'kisskh') catalogs = catalogs.filter(c => c.id.startsWith('kisskh'));
+  else if (providers === 'rama') catalogs = catalogs.filter(c => c.id.startsWith('rama'));
+
+  // Extra types / prefixes for Cinemeta support
+  const extraTypes    = cinemeta ? ['movie'] : [];
+  const extraPrefixes = cinemeta ? ['tt'] : [];
+
+  return {
+    ...manifest,
+    catalogs: hideCatalogs ? [] : catalogs,
+    types:      [...new Set([...(manifest.types || []), ...extraTypes])],
+    idPrefixes: [...new Set([...(manifest.idPrefixes || []), ...extraPrefixes])],
+  };
+}
+
 // Manifest
 app.get(['/manifest.json', '/:config/manifest.json'], (req, res) => {
-  stremioJson(res, manifest);
+  const config = cfgFrom(req.params.config);
+  stremioJson(res, buildManifest(config));
 });
 
 // Catalog — handles optional /skip=N extra segment
@@ -280,6 +309,13 @@ input::placeholder{color:#4b5563}
 .ok-msg{color:#34d399;font-size:.79rem;margin-top:8px;display:none}
 .def-link{text-align:center;margin-top:12px}
 .def-link a{color:var(--muted);font-size:.78rem;text-decoration:underline}
+.radio-group{display:flex;gap:8px;flex-wrap:wrap;margin-top:6px}
+.ropt{display:flex;align-items:center;gap:6px;background:#1a1a25;border:1px solid #2d2d42;border-radius:8px;padding:7px 14px;cursor:pointer;font-size:.84rem;color:var(--sub);transition:border-color .15s}
+.ropt:has(input:checked){border-color:var(--accent);color:var(--accent-light);background:#1e1b4b}
+.ropt input{accent-color:var(--accent);cursor:pointer}
+.chk-row{display:flex;align-items:flex-start;gap:10px;margin-top:12px;cursor:pointer}
+.chk-row input[type=checkbox]{accent-color:var(--accent);width:16px;height:16px;flex-shrink:0;margin-top:2px;cursor:pointer}
+.chk-label{font-size:.84rem;color:var(--sub);line-height:1.5}
 </style>
 </head>
 <body>
@@ -341,6 +377,32 @@ Configura il proxy per sbloccare i contenuti da Vercel.</p>
   </div>
 </div>
 
+<div class="card">
+  <div class="card-title">🎛️ Provider &amp; Catalogo <span class="badge">Visibilità</span></div>
+
+  <label style="margin-top:0">Provider attivi</label>
+  <div class="radio-group" id="providerGroup">
+    <label class="ropt"><input type="radio" name="pv" value="all" ${(!f.providers || f.providers === 'all') ? 'checked' : ''}/> 🌐 Tutti</label>
+    <label class="ropt"><input type="radio" name="pv" value="kisskh" ${f.providers === 'kisskh' ? 'checked' : ''}/> <b>KissKH</b></label>
+    <label class="ropt"><input type="radio" name="pv" value="rama" ${f.providers === 'rama' ? 'checked' : ''}/> <b>Rama</b></label>
+  </div>
+  <div class="hint">Scegli da quale sorgente vuoi i flussi streaming.</div>
+
+  <label class="chk-row" for="hideCatalogs">
+    <input type="checkbox" id="hideCatalogs" ${f.hideCatalogs ? 'checked' : ''}/>
+    <span class="chk-label"><b>Nascondi cataloghi dalla home di Stremio</b><br/>
+      Rimuove le sezioni "Asian Drama" e "Korean Drama" dalla schermata principale.
+      Utile se usi Cinemeta come catalogo principale.</span>
+  </label>
+
+  <label class="chk-row" for="cinemetaChk">
+    <input type="checkbox" id="cinemetaChk" ${f.cinemeta ? 'checked' : ''}/>
+    <span class="chk-label"><b>Abilita stream da Cinemeta / IMDB</b><br/>
+      Il nostro addon risponderà anche ai titoli trovati tramite Cinemeta.
+      Cerca il drama su Cinemeta → i flussi arriveranno da KissKH/Rama automaticamente.</span>
+  </label>
+</div>
+
 <button class="gen-btn" onclick="generate()">✨ Genera URL personalizzato</button>
 
 <div class="result" id="result">
@@ -365,19 +427,26 @@ Configura il proxy per sbloccare i contenuti da Vercel.</p>
   }
   function encCfg(c){
     var o={};
-    if(c.mfpUrl) o.mfp=c.mfpUrl;
-    if(c.mfpKey) o.mfpk=c.mfpKey;
-    if(c.proxyUrl) o.px=c.proxyUrl;
+    if(c.mfpUrl)        o.mfp=c.mfpUrl;
+    if(c.mfpKey)        o.mfpk=c.mfpKey;
+    if(c.proxyUrl)      o.px=c.proxyUrl;
+    if(c.hideCatalogs)  o.hc=1;
+    if(c.providers && c.providers!=='all') o.pv=c.providers==='kisskh'?'k':'r';
+    if(c.cinemeta)      o.cm=1;
     return b64url(JSON.stringify(o));
   }
   window.generate=function(){
+    var pvEl=document.querySelector('input[name="pv"]:checked');
     var cfg={
       mfpUrl: document.getElementById('mfpUrl').value.trim(),
       mfpKey: document.getElementById('mfpKey').value.trim(),
-      proxyUrl: document.getElementById('proxyUrl').value.trim()
+      proxyUrl: document.getElementById('proxyUrl').value.trim(),
+      hideCatalogs: document.getElementById('hideCatalogs').checked,
+      providers: pvEl ? pvEl.value : 'all',
+      cinemeta: document.getElementById('cinemetaChk').checked
     };
-    if(!cfg.mfpUrl&&!cfg.proxyUrl){
-      alert('Inserisci almeno MediaFlow Proxy URL oppure HTTP Proxy URL.');
+    if(!cfg.mfpUrl&&!cfg.proxyUrl&&!cfg.hideCatalogs&&cfg.providers==='all'&&!cfg.cinemeta){
+      alert('Configura almeno una opzione (Proxy, Provider, o Nascondi cataloghi).');
       return;
     }
     var enc=encCfg(cfg);
