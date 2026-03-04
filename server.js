@@ -317,11 +317,11 @@ Configura il proxy per sbloccare i contenuti da Vercel.</p>
     var stremio='stremio://${addonHost}/'+enc+'/manifest.json';
     document.getElementById('udisp').textContent=url;
     document.getElementById('acts').innerHTML=
-      '<button class="btn btn-cp" onclick="cp(\''+url.replace(/'/g,"\\'")+'\')">'
-        +'📋 Copia URL</button>'
+      '<button id="_actCp" class="btn btn-cp">📋 Copia URL</button>'
       +'<a class="btn btn-st" href="'+stremio+'">▶ Installa su Stremio</a>'
       +'<a class="btn btn-wb" href="https://web.stremio.com/#/addons?addon='
         +encodeURIComponent(url)+'" target="_blank">🌐 Web</a>';
+    document.getElementById('_actCp').onclick=function(){ cp(url); };
     var r=document.getElementById('result');
     r.classList.add('show');
     r.scrollIntoView({behavior:'smooth',block:'nearest'});
