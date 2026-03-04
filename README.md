@@ -3,10 +3,15 @@
 ![Version](https://img.shields.io/badge/version-1.0.0-blue?style=flat-square)
 ![Node](https://img.shields.io/badge/node-%3E%3D18-green?style=flat-square)
 ![License](https://img.shields.io/badge/license-MIT-lightgrey?style=flat-square)
-[![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https%3A%2F%2Fgithub.com%2FYOUR_USERNAME%2Fstreamfusion-mail)
+[![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https%3A%2F%2Fgithub.com%2Fvitouchiha%2Fstreamfusion-mail)
+[![Vercel Status](https://img.shields.io/badge/vercel-deployed-brightgreen?style=flat-square&logo=vercel)](https://streamfusion-mail.vercel.app)
 
 > Aggregatore flussi streaming multi-provider per [Stremio](https://www.stremio.com/)  
 > Korean Drama & Asian Drama da **Rama Oriental Fansub** e **KissKH**
+>
+> 🔗 **Live:** https://streamfusion-mail.vercel.app  
+> 📦 **GitHub:** https://github.com/vitouchiha/streamfusion-mail  
+> 📡 **Manifest:** https://streamfusion-mail.vercel.app/manifest.json
 
 ---
 

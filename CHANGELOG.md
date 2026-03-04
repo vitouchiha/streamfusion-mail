@@ -5,6 +5,38 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) · Versi
 
 ---
 
+## [1.0.3] — 2026-03-04
+
+### Fixed
+- `vercel.json` — added `api/index.js` wrapper to satisfy Vercel `builds` convention
+- `vercel.json` — reverted to `builds`-only format (no `functions` block, no conflict)
+- Memory limit adjusted to comply with Hobby plan (1024 MB cap)
+
+---
+
+## [1.0.2] — 2026-03-04
+
+### Fixed
+- `vercel.json` — removed `builds` + `functions` conflict; switched to `functions`-only format
+
+---
+
+## [1.0.1] — 2026-03-04
+
+### Added
+- `src/utils/browser.js` — unified Puppeteer launcher with `@sparticuz/chromium` for serverless
+  (auto-detects Vercel/Lambda, custom path, or local Chrome)
+- `api/index.js` — Vercel serverless entry point (thin wrapper over `server.js`)
+
+### Changed
+- `package.json` — replaced `puppeteer` with `puppeteer-core` + `@sparticuz/chromium`
+- `src/utils/cloudflare.js` — uses shared `launchBrowser()` instead of inline Puppeteer launch
+- `src/providers/kisskh.js` — uses shared `launchBrowser()`, removes redundant `_launchBrowser()`
+- `vercel.json` — `builds` pointing to `api/index.js`, no more conflict
+- `.vercelignore` — added to reduce deploy bundle size
+
+---
+
 ## [1.0.0] — 2026-03-04
 
 ### Added
