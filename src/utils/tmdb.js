@@ -118,7 +118,7 @@ async function _searchTv(title, year, apiKey) {
     });
     if (year) params.set('first_air_date_year', String(year));
 
-    const { data } = await axios.get(`${TMDB_BASE}/search/tv?${params}`, { timeout: 8_000 });
+    const { data } = await axios.get(`${TMDB_BASE}/search/tv?${params}`, { timeout: 8_000, headers: { 'Accept-Language': 'it-IT,it;q=0.9,en-US;q=0.8' } });
     if (!data.results || !data.results.length) continue;
 
     // Prefer Korean-language results (original_language: 'ko')
@@ -138,7 +138,7 @@ async function _getTvDetail(tmdbId, apiKey) {
     language:           'it-IT',
     append_to_response: 'external_ids,credits,content_ratings',
   });
-  const { data } = await axios.get(`${TMDB_BASE}/tv/${tmdbId}?${params}`, { timeout: 8_000 });
+  const { data } = await axios.get(`${TMDB_BASE}/tv/${tmdbId}?${params}`, { timeout: 8_000, headers: { 'Accept-Language': 'it-IT,it;q=0.9,en-US;q=0.8' } });
   return data || null;
 }
 

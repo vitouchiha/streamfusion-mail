@@ -52,7 +52,7 @@ async function getCatalog(skip = 0, search = '', config = {}) {
   while (items.length < ITEMS_PER_PAGE && pageNumber <= MAX_PAGES) {
     const url = `${BASE_URL}${CATALOG_PATH}page/${pageNumber}/`;
     log.info(`fetching catalog page ${pageNumber}`, { url });
-    const html = await fetchWithCloudscraper(url, { referer: BASE_URL + CATALOG_PATH, proxyUrl: config.proxyUrl });
+    const html = await fetchWithCloudscraper(url, { referer: BASE_URL + CATALOG_PATH, proxyUrl: config.proxyUrl, clientIp: config.clientIp });
     if (!html) break;
 
     const $ = cheerio.load(html);
@@ -123,7 +123,7 @@ async function getMeta(id, config = {}) {
   const seriesUrl = `${BASE_URL}/drama/${baseId}/`;
   log.info('fetching meta', { id, seriesUrl });
 
-  const html = await fetchWithCloudscraper(seriesUrl, { referer: BASE_URL, proxyUrl: config.proxyUrl });
+  const html = await fetchWithCloudscraper(seriesUrl, { referer: BASE_URL, proxyUrl: config.proxyUrl, clientIp: config.clientIp });
   if (!html) {
     log.warn('meta fetch returned null', { id });
     return { meta: await _tmdbFallbackMeta(seriesId, baseId, config) };

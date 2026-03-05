@@ -76,7 +76,7 @@ function randomUA() {
  * @param {string}  [opts.referer]
  * @returns {Promise<string|null>}
  */
-async function fetchWithCloudscraper(url, { retries = 3, timeout = 12_000, retryDelay = 2_000, referer, proxyUrl } = {}) {
+async function fetchWithCloudscraper(url, { retries = 3, timeout = 12_000, retryDelay = 2_000, referer, proxyUrl, clientIp } = {}) {
   // Per-request proxyUrl overrides env var
   const effectiveProxy = (proxyUrl || process.env.PROXY_URL || '').trim() || null;
   for (let attempt = 1; attempt <= retries; attempt++) {
@@ -87,7 +87,8 @@ async function fetchWithCloudscraper(url, { retries = 3, timeout = 12_000, retry
         headers: {
           'User-Agent': randomUA(),
           'Referer': referer || url,
-          'Accept-Language': 'en-US,en;q=0.9',
+          'Accept-Language': 'it-IT,it;q=0.9,en-US;q=0.8,en;q=0.7',
+          ...(clientIp ? { 'X-Forwarded-For': clientIp } : {}),
           'Upgrade-Insecure-Requests': '1',
           'Cache-Control': 'no-cache',
           'Pragma': 'no-cache',
@@ -133,10 +134,11 @@ async function fetchWithCloudscraper(url, { retries = 3, timeout = 12_000, retry
  * @param {number} [opts.retries=2]
  * @returns {Promise<any|null>}
  */
-async function fetchWithAxios(url, { headers = {}, timeout = 10_000, responseType = 'json', retries = 2, proxyUrl } = {}) {
+async function fetchWithAxios(url, { headers = {}, timeout = 10_000, responseType = 'json', retries = 2, proxyUrl, clientIp } = {}) {
   const mergedHeaders = {
     'User-Agent': randomUA(),
     'Accept': 'application/json, text/plain, */*',
+    ...(clientIp ? { 'X-Forwarded-For': clientIp } : {}),
     ...headers,
   };
   // Per-request proxyUrl overrides env var

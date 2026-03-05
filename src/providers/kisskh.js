@@ -38,19 +38,22 @@ const subCache     = new TTLCache({ ttl: 24 * 60 * 60_000, maxSize: 500 });
 // ─── Shared axios headers ─────────────────────────────────────────────────────
 
 /** Base headers without CF cookie — fast, no Puppeteer */
-function _baseHeaders() {
-  return {
+function _baseHeaders(clientIp) {
+  const h = {
     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
     'Accept': 'application/json, text/plain, */*',
+    'Accept-Language': 'it-IT,it;q=0.9,en-US;q=0.8,en;q=0.7',
     'Referer': SITE_BASE + '/',
     'Origin': SITE_BASE,
   };
+  if (clientIp) h['X-Forwarded-For'] = clientIp;
+  return h;
 }
 
 /** Full headers with CF cookie — slow, used only when base headers get 403 */
-async function _headers() {
+async function _headers(clientIp) {
   const cookie = await withTimeout(getCloudflareCookie(), 3_500, 'cf-cookie').catch(() => '');
-  return { ..._baseHeaders(), ...(cookie ? { 'Cookie': cookie } : {}) };
+  return { ..._baseHeaders(clientIp), ...(cookie ? { 'Cookie': cookie } : {}) };
 }
 
 /**
@@ -66,7 +69,7 @@ async function _headers() {
  * @param {string} [proxyUrl]
  * @returns {Promise<any|null>}
  */
-async function _apiGet(url, timeout = 8_000, proxyUrl) {
+async function _apiGet(url, timeout = 8_000, proxyUrl, clientIp) {
   // 1. FlareSolverr session approach: primer visit + API call from same IP
   //    Hard 20 s cap — flareSolverrGetJSONWithPrimer can take up to ~110 s
   //    (two sequential sessionGet calls × 55 s MAX_TIMEOUT each), which makes
@@ -95,7 +98,7 @@ async function _apiGet(url, timeout = 8_000, proxyUrl) {
   const proxyAgent = proxyUrl ? makeProxyAgent(proxyUrl) : getProxyAgent();
   const proxyConfig = proxyAgent ? { httpsAgent: proxyAgent, httpAgent: proxyAgent, proxy: false } : {};
   try {
-    const { data } = await axios.get(url, { headers: _baseHeaders(), timeout, ...proxyConfig });
+    const { data } = await axios.get(url, { headers: _baseHeaders(clientIp), timeout, ...proxyConfig });
     return data;
   } catch (err) {
     const status = err?.response?.status;
@@ -104,7 +107,7 @@ async function _apiGet(url, timeout = 8_000, proxyUrl) {
 
   // 3. Retry with CF cookie
   try {
-    const headers = await _headers();
+    const headers = await _headers(clientIp);
     const { data } = await axios.get(url, { headers, timeout, ...proxyConfig });
     return data;
   } catch (err2) {
@@ -130,23 +133,26 @@ async function getCatalog(skip = 0, search = '', config = {}) {
 
   const page = Math.floor(skip / 20) + 1;
   const items = search.trim()
-    ? await _searchCatalog(search.trim(), 20, config.proxyUrl)
-    : await _listCatalog(page, 20, config.proxyUrl);
+    ? await _searchCatalog(search.trim(), 20, config.proxyUrl, config.clientIp)
+    : await _listCatalog(page, 20, config.proxyUrl, config.clientIp);
 
   catalogCache.set(cacheKey, items);
   return items;
 }
 
-async function _listCatalog(page, limit, proxyUrl) {
+async function _listCatalog(page, limit, proxyUrl, clientIp) {
   // country=2 → Korea only; status=0 → all (ongoing + completed)
   const url = `${API_BASE}/DramaList/List?page=${page}&type=1&sub=0&country=2&status=0&order=3&pageSize=${limit}`;
   log.info('list catalog', { url });
-  const data = await _apiGet(url, 8_000, proxyUrl);
+  const data = await _apiGet(url, 8_000, proxyUrl, clientIp);
   if (!data || !data.data) return [];
-  return data.data.map(_mapItem);
+  const basicItems = data.data.map(_mapItem);
+  // Enrich all items in parallel with KissKH drama detail (not CF-protected, fast)
+  // Side effect: populates metaCache so getMeta hits are served instantly
+  return _enrichCatalogItems(basicItems, proxyUrl, clientIp);
 }
 
-async function _searchCatalog(query, limit = 20, proxyUrl) {
+async function _searchCatalog(query, limit = 20, proxyUrl, clientIp) {
   // NOTE: KissKH's `search=` parameter is ignored by the API — it always
   // returns dramas sorted by recency. We paginate manually and apply local
   // title-similarity filtering. To find older dramas we must search more pages.
@@ -167,7 +173,7 @@ async function _searchCatalog(query, limit = 20, proxyUrl) {
         // country=2 → Korea only; status=0 → ongoing + completed
         const url = `${API_BASE}/DramaList/List?page=${p}&type=1&sub=0&country=2&status=0&order=3&pageSize=30`;
         try {
-          const data = await _apiGet(url, 8_000, proxyUrl);
+          const data = await _apiGet(url, 8_000, proxyUrl, clientIp);
           if (!data || !data.data || !data.data.length) return [];
           return data.data
             .map(_mapItem)
@@ -187,7 +193,9 @@ async function _searchCatalog(query, limit = 20, proxyUrl) {
 
   // Deduplicate
   const seen = new Set();
-  return allResults.filter(i => { if (seen.has(i.id)) return false; seen.add(i.id); return true; }).slice(0, limit);
+  const unique = allResults.filter(i => { if (seen.has(i.id)) return false; seen.add(i.id); return true; }).slice(0, limit);
+  // Enrich found items with KissKH detail
+  return _enrichCatalogItems(unique, proxyUrl, clientIp);
 }
 
 function _mapItem(item) {
@@ -197,8 +205,87 @@ function _mapItem(item) {
     name: item.title,
     poster: item.thumbnail,
     posterShape: 'poster',
-    releaseInfo: item.releaseDate ? item.releaseDate.slice(0, 4) : '',
   };
+}
+
+/**
+ * Enrich basic catalog items with KissKH drama detail data in parallel.
+ * Populates metaCache as a side effect so getMeta is served from cache.
+ * @param {Array} items  basic _mapItem() objects
+ * @returns {Promise<Array>}
+ */
+async function _enrichCatalogItems(items, proxyUrl, clientIp) {
+  const enriched = await Promise.all(items.map(async (item) => {
+    // If already in metaCache, use that
+    const cached = metaCache.get(item.id);
+    if (cached) {
+      return _metaToCatalogItem(cached);
+    }
+    // Fetch drama detail from KissKH (NOT CF-protected, fast)
+    const serieId = item.id.replace(/^kisskh_/, '');
+    const data = await _apiGet(
+      `${API_BASE}/DramaList/Drama/${serieId}?isq=false`,
+      6_000, proxyUrl, clientIp
+    ).catch(() => null);
+    if (!data) return item; // fallback to basic item
+    const meta = _buildMeta(item.id, serieId, data, null);
+    metaCache.set(item.id, meta);
+    return _metaToCatalogItem(meta);
+  }));
+  return enriched;
+}
+
+/** Build the standard meta object from KissKH drama detail response */
+function _buildMeta(id, serieId, data, castData) {
+  let cast;
+  if (Array.isArray(castData) && castData.length) {
+    cast = castData
+      .map(a => { const n = a.name || a.title || ''; const c = a.characterName || a.character || ''; return c ? `${n} (${c})` : n; })
+      .filter(Boolean);
+  } else if (Array.isArray(data.artists) && data.artists.length) {
+    cast = data.artists.map(a => (typeof a === 'string' ? a : a.name || a.title || '')).filter(Boolean);
+  }
+  return {
+    id,
+    type: 'series',
+    name: data.title,
+    poster: data.thumbnail,
+    background: data.thumbnail || undefined,
+    description: data.description || '',
+    releaseInfo: data.releaseDate ? data.releaseDate.slice(0, 4) : '',
+    status: data.status || undefined,
+    country: data.country || undefined,
+    genres: Array.isArray(data.genres) && data.genres.length
+      ? data.genres.map(g => (typeof g === 'string' ? g : g.name || g.title || '')).filter(Boolean)
+      : (data.subCategory ? [data.subCategory] : undefined),
+    cast: cast && cast.length ? cast : undefined,
+    serieId,
+    videos: (data.episodes || []).map((ep, idx) => ({
+      id: `${id}:${ep.id}`,
+      title: ep.title || `Episode ${ep.number || idx + 1}`,
+      season: Number(ep.season) || 1,
+      episode: Number(ep.episode || ep.number || idx + 1),
+      overview: ep.description || ep.overview || ep.synopsis || '',
+      thumbnail: ep.thumbnail || data.thumbnail,
+      released: ep.releaseDate || '',
+    })),
+  };
+}
+
+/** Convert a full meta object to a lighter Stremio catalog item */
+function _metaToCatalogItem(meta) {
+  const item = {
+    id: meta.id,
+    type: 'series',
+    name: meta.name,
+    poster: meta.poster,
+    posterShape: 'poster',
+    releaseInfo: meta.releaseInfo || '',
+  };
+  if (meta.description) item.description = meta.description;
+  if (meta.genres?.length) item.genres = meta.genres;
+  if (meta.background) item.background = meta.background;
+  return item;
 }
 
 // ─── Meta ─────────────────────────────────────────────────────────────────────
@@ -221,50 +308,12 @@ async function getMeta(id, config = {}) {
   try {
     // Fetch drama detail and cast in parallel
     const [data, castData] = await Promise.all([
-      _apiGet(url, 8_000, config.proxyUrl),
-      _apiGet(`${API_BASE}/DramaList/Cast/${serieId}`, 6_000, config.proxyUrl).catch(() => null),
+      _apiGet(url, 8_000, config.proxyUrl, config.clientIp),
+      _apiGet(`${API_BASE}/DramaList/Cast/${serieId}`, 6_000, config.proxyUrl, config.clientIp).catch(() => null),
     ]);
     if (!data) return { meta: null };
 
-    // Cast: from dedicated endpoint or from artists field in drama response
-    let cast;
-    if (Array.isArray(castData) && castData.length) {
-      cast = castData
-        .map(a => {
-          const name = a.name || a.title || '';
-          const char = a.characterName || a.character || '';
-          return char ? `${name} (${char})` : name;
-        })
-        .filter(Boolean);
-    } else if (Array.isArray(data.artists) && data.artists.length) {
-      cast = data.artists
-        .map(a => (typeof a === 'string' ? a : a.name || a.title || ''))
-        .filter(Boolean);
-    }
-
-    const meta = {
-      id,
-      type: 'series',
-      name: data.title,
-      poster: data.thumbnail,
-      background: data.thumbnail || undefined,
-      description: data.description || '',
-      releaseInfo: data.releaseDate ? data.releaseDate.slice(0, 4) : '',
-      genres: Array.isArray(data.genres) && data.genres.length
-        ? data.genres.map(g => (typeof g === 'string' ? g : g.name || g.title || '')).filter(Boolean)
-        : (data.subCategory ? [data.subCategory] : undefined),
-      cast: cast && cast.length ? cast : undefined,
-      serieId,
-      videos: (data.episodes || []).map((ep, idx) => ({
-        id: `${id}:${ep.id}`,
-        title: ep.title || `Episode ${ep.number || idx + 1}`,
-        season: Number(ep.season) || 1,
-        episode: Number(ep.episode || ep.number || idx + 1),
-        overview: ep.description || ep.overview || ep.synopsis || '',
-        thumbnail: ep.thumbnail || data.thumbnail,
-        released: ep.releaseDate || '',
-      })),
-    };
+    const meta = _buildMeta(id, serieId, data, castData);
 
     // ── TMDB enrichment (fills poster with HD artwork, cast, genres, imdb_id) ─
     if (config.tmdbKey) {

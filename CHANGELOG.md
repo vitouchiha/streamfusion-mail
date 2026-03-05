@@ -5,6 +5,19 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) · Versi
 
 ---
 
+## [1.3.8] — 2026-03-05
+
+### Added
+- **KissKH catalog enrichment da KissKH stesso** — `_listCatalog` e `_searchCatalog` ora eseguono in parallelo le chiamate alla drama detail API (non CF-protetta) per ogni item del catalogo. Le card nella home mostrano `description`, `genres`, `releaseInfo`. Effetto collaterale: `metaCache` viene pre-popolato, quindi quando Stremio apre un item e chiama `getMeta`, la risposta è istantanea dalla cache (elimina il "No metadata was found").
+- **`_buildMeta` helper** — logica di costruzione del meta object estratta in una funzione condivisa usata sia da `getCatalog` (enrichment) che da `getMeta` (eliminata duplicazione di codice).
+- **IP client passato ai provider** — `server.js` legge l'IP del client da `X-Forwarded-For` (impostato da Vercel) e lo inietta in `config.clientIp`. Tutti i provider (`kisskh.js`, `rama.js`) e le utility (`fetcher.js`) usano questo IP come header `X-Forwarded-For` nelle richieste upstream. Questo fa apparire le richieste come provenienti dall'IP italiano dell'utente.
+- **`Accept-Language: it-IT`** — aggiunto a `fetchWithCloudscraper` (Rama), `_baseHeaders` KissKH, e alle chiamate TMDB axios.
+
+### Fixed
+- **`getMeta` semplificato** — rimosso codice duplicato (cast parsing, video mapping) ora centralizzato in `_buildMeta`.
+
+---
+
 ## [1.3.7] — 2026-03-05
 
 ### Fixed

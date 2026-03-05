@@ -74,6 +74,16 @@ function cfgFrom(param) {
   return (param && isValidConfig(param)) ? decodeConfig(param) : { ...DEFAULT_CONFIG };
 }
 
+/**
+ * Extract the real client IP from standard proxy headers.
+ * Vercel sets x-forwarded-for to the original client IP.
+ */
+function clientIpFrom(req) {
+  const xff = req.headers['x-forwarded-for'];
+  if (xff) return xff.split(',')[0].trim();
+  return req.headers['x-real-ip'] || req.socket?.remoteAddress || '';
+}
+
 /** Stremio JSON response with optional Cache-Control */
 function stremioJson(res, data, { maxAge = 0 } = {}) {
   if (maxAge > 0) {
@@ -132,7 +142,7 @@ app.get([
   '/:config/catalog/:type/:id/:extra.json',
   '/:config/catalog/:type/:id.json',
 ], async (req, res) => {
-  const config = cfgFrom(req.params.config);
+  const config = { ...cfgFrom(req.params.config), clientIp: clientIpFrom(req) };
   const extra  = parseExtra(req.params.extra);
   try {
     const result = await handleCatalog(req.params.type, req.params.id, extra, config);
@@ -149,7 +159,7 @@ app.get([
   '/meta/:type/:id.json',
   '/:config/meta/:type/:id.json',
 ], async (req, res) => {
-  const config = cfgFrom(req.params.config);
+  const config = { ...cfgFrom(req.params.config), clientIp: clientIpFrom(req) };
   try {
     const metaResult = await handleMeta(req.params.type, req.params.id, config);
     // Don't cache null results — let Stremio retry next time
@@ -166,7 +176,7 @@ app.get([
   '/stream/:type/:id.json',
   '/:config/stream/:type/:id.json',
 ], async (req, res) => {
-  const config = cfgFrom(req.params.config);
+  const config = { ...cfgFrom(req.params.config), clientIp: clientIpFrom(req) };
   try {
     const result = await handleStream(req.params.type, req.params.id, config);
     const age = result.streams && result.streams.length > 0 ? 3600 : 0;
