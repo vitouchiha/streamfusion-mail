@@ -5,7 +5,14 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) · Versi
 
 ---
 
-## [1.3.3] — 2026-05-08
+## [1.3.4] — 2026-05-08
+
+### Removed
+- **Drammatica provider** rimosso — `www.drammatica.it` risulta parcheggiato (ParkLogic domain parking): il sito non è più attivo. Rimosso da `manifest.json` (catalog + idPrefix), da `src/providers/index.js` (routing, import, `_drammaticaStreamsForTitle`). Il file `drammatica.js` rimane in codebase nel caso venga trovato un nuovo URL.
+
+---
+
+
 
 ### Removed
 - **Guardaserie provider** rimosso — già presente in altri addon; tolto da `manifest.json` (catalog + idPrefix), da `src/providers/index.js` (routing, import, `_guardaserieStreamsForTitle`) e dalla landing page.

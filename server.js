@@ -360,30 +360,21 @@ app.get('/debug/browser', requireDebugAuth, async (req, res) => {
 });
 
 app.get('/debug/drammatica', requireDebugAuth, async (req, res) => {
+  // Drammatica.it is domain-parked (ParkLogic). This endpoint checks live status.
   const { fetchWithCloudscraper } = require('./src/utils/fetcher');
-  const cheerio = require('cheerio');
   const proxyUrl = (process.env.PROXY_URL || '').trim();
-
-  // Inspect wordpress.com mirror candidate
-  const wpUrl = 'https://drammaticaita.wordpress.com/';
+  const base = (req.query.url || 'https://www.drammatica.it').trim();
   const t0 = Date.now();
   try {
-    const html = await fetchWithCloudscraper(wpUrl, { referer: wpUrl, proxyUrl });
-    if (!html) return res.json({ error: 'empty response' });
-    const $ = cheerio.load(html);
-    const title = $('title').text().trim().slice(0, 100);
-    const articles = [];
-    $('article, .post, .entry, h2 a[href], h3 a[href], .wp-block-post').slice(0, 5).each((_, el) => {
-      articles.push({ cls: $(el).attr('class'), tag: el.name, href: $(el).find('a[href]').first().attr('href'), text: $(el).find('h2, h3, .entry-title').first().text().trim().slice(0, 60) });
-    });
-    const dramaLinks = [];
-    $('a[href]').each((_, el) => {
-      const h = $(el).attr('href') || '';
-      if (h.includes('drama') || h.includes('k-drama') || h.includes('serie') || h.includes('kdrama')) dramaLinks.push(h);
-    });
-    res.json({ url: wpUrl, htmlLen: html.length, title, articles, dramaLinksCount: dramaLinks.length, dramaLinksFirst5: dramaLinks.slice(0, 5), htmlPreview: html.slice(0, 800).replace(/\s+/g, ' '), ms: Date.now()-t0 });
+    const html = await fetchWithCloudscraper(base + '/', { referer: base, proxyUrl });
+    const cheerio = require('cheerio');
+    const $ = html ? cheerio.load(html) : null;
+    const title = $ ? $('title').text().trim().slice(0, 80) : '';
+    const isParked = !html || html.includes('parklogic') || html.includes('Redirecting...') || html.length < 6000;
+    const articleCount = $ ? $('article').length : 0;
+    res.json({ url: base, alive: !!html && !isParked, isParked, htmlLen: html?.length ?? 0, title, articleCount, ms: Date.now()-t0 });
   } catch (err) {
-    res.json({ error: err.message, ms: Date.now()-t0 });
+    res.json({ url: base, alive: false, error: err.message, ms: Date.now()-t0 });
   }
 });
 
