@@ -382,7 +382,7 @@ app.get('/debug/drammatica', requireDebugAuth, async (req, res) => {
       $('article a[href]').slice(0, 5).each((_, el) => firstHrefs.push($(el).attr('href')));
       const firstClasses = [];
       $('article').slice(0, 3).each((_, el) => firstClasses.push($(el).attr('class') || ''));
-      result.paths[path] = { ok: true, htmlLen: html.length, title, cfBlocked, articleCount, h2Links, firstHrefs, firstClasses, ms: Date.now()-t0 };
+      result.paths[path] = { ok: true, htmlLen: html.length, title, cfBlocked, articleCount, h2Links, firstHrefs, firstClasses, htmlPreview: html.slice(0, 600).replace(/\s+/g, ' '), ms: Date.now()-t0 };
     } catch (err) {
       result.paths[path] = { ok: false, error: err.message, ms: Date.now()-t0 };
     }
