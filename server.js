@@ -359,6 +359,71 @@ app.get('/debug/browser', requireDebugAuth, async (req, res) => {
   }
 });
 
+// ─── Debug: Rama episode stream fetch ────────────────────────────────────────
+
+app.get('/debug/rama-stream', requireDebugAuth, async (req, res) => {
+  const { fetchWithCloudscraper } = require('./src/utils/fetcher');
+  const cheerio = require('cheerio');
+  const slug = req.query.slug || 'in-your-radiant-season';
+  const BASE = 'https://ramaorientalfansub.live';
+  const seriesUrl = `${BASE}/drama/${slug}/`;
+  const result = { slug, seriesUrl };
+  const t0 = Date.now();
+  try {
+    const html = await fetchWithCloudscraper(seriesUrl, { referer: BASE, timeout: 20_000 });
+    result.seriesHtmlLen = html ? html.length : 0;
+    result.seriesFetch = !!html;
+    if (!html) { result.totalMs = Date.now()-t0; return res.json(result); }
+
+    const $ = cheerio.load(html);
+    const links = [];
+    $('.swiper-slide').each((_, el) => {
+      const a = $(el).find('a[href*="/watch/"]').first();
+      const href = a.attr('href');
+      if (href) links.push(href);
+    });
+    result.episodeLinks = links.slice(0, 3);
+    result.episodeCount = links.length;
+
+    if (!links.length) { result.totalMs = Date.now()-t0; return res.json(result); }
+
+    // Try fetching first episode page
+    const epUrl = links[0];
+    result.episodeUrl = epUrl;
+    const t1 = Date.now();
+    const epHtml = await fetchWithCloudscraper(epUrl, { referer: BASE, timeout: 20_000 });
+    result.episodeHtmlLen = epHtml ? epHtml.length : 0;
+    result.episodeFetch = !!epHtml;
+    result.episodeFetchMs = Date.now()-t1;
+
+    if (epHtml) {
+      const $ep = cheerio.load(epHtml);
+      const iframe = $ep('div.episode-player-box iframe, .player-box iframe, #player iframe, iframe[src*="supervideo"], iframe[src*="dood"], iframe[src*="drop"]');
+      result.iframeFound = iframe.length > 0;
+      result.iframeSrc   = iframe.first().attr('src') || iframe.first().attr('data-src') || null;
+      // Scan all iframes
+      const allIframes = [];
+      $ep('iframe').each((_, el) => {
+        const src = $ep(el).attr('src') || $ep(el).attr('data-src') || '';
+        if (src) allIframes.push(src.slice(0, 120));
+      });
+      result.allIframes = allIframes.slice(0, 5);
+      // Check for m3u8/mp4
+      const m3u8Match = epHtml.match(/(https?:\/\/[^"'\s]+\.m3u8[^"'\s]*)/);
+      const mp4Match  = epHtml.match(/(https?:\/\/[^"'\s]+\.mp4[^"'\s]*)/);
+      result.m3u8Found = !!m3u8Match;
+      result.mp4Found  = !!mp4Match;
+      result.m3u8Preview = m3u8Match ? m3u8Match[1].slice(0, 100) : null;
+      // Preview first 600 chars of body (to see page structure)
+      result.htmlPreview = epHtml.replace(/<[^>]+>/g, ' ').replace(/\s+/g,' ').trim().slice(0, 600);
+    }
+  } catch (err) {
+    result.error = err.message;
+  }
+  result.totalMs = Date.now()-t0;
+  res.json(result);
+});
+
 // ─── Landing Page ─────────────────────────────────────────────────────────────
 
 app.get('/', (req, res) => {
