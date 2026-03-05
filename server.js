@@ -570,7 +570,7 @@ Configura il proxy per sbloccare i contenuti da Vercel.</p>
   <div class="card-title">🎬 TopPoster <span class="badge">Poster personalizzati</span></div>
   <p style="font-size:.82rem;color:var(--muted);margin-bottom:14px">
     Sostituisce i poster standard con locandine personalizzate ad alta qualità.
-    Richiede TMDB attivo (per ricavare l&rsquo;IMDB ID). <a href="https://topasterdb.com" target="_blank" style="color:var(--accent-light)">topasterdb.com</a>
+    Richiede TMDB attivo (per ricavare l&rsquo;IMDB ID). <a href="https://api.top-streaming.stream/user/dashboard" target="_blank" style="color:var(--accent-light)">top-streaming.stream</a>
   </p>
   <label for="tpKey">TopPoster API Key</label>
   <input id="tpKey" type="password" placeholder="Incolla qui la tua TopPoster API key" autocomplete="off" spellcheck="false" value="${esc(f.topPosterKey)}"/>

@@ -93,8 +93,8 @@ function rpdbPosterUrl(rpdbKey, imdbId) {
  * Build a TopPoster poster URL.
  * Returns null if apiKey or imdbId is missing.
  *
- * TopPoster API docs: https://topasterdb.com
- * Poster URL format: https://api.topasterdb.com/{key}/imdb/poster-default/{imdbId}.jpg
+ * TopPoster API docs: https://api.top-streaming.stream/user/dashboard
+ * Poster URL format: https://api.top-streaming.stream/{key}/imdb/poster-default/{imdbId}.jpg
  *
  * @param {string} topPosterKey
  * @param {string} imdbId   e.g. "tt1234567"
@@ -102,7 +102,7 @@ function rpdbPosterUrl(rpdbKey, imdbId) {
  */
 function topPosterUrl(topPosterKey, imdbId) {
   if (!topPosterKey || !imdbId || !imdbId.startsWith('tt')) return null;
-  return `https://api.topasterdb.com/${topPosterKey}/imdb/poster-default/${imdbId}.jpg`;
+  return `https://api.top-streaming.stream/${topPosterKey}/imdb/poster-default/${imdbId}.jpg`;
 }
 
 // ─── Internal helpers ─────────────────────────────────────────────────────────
