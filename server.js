@@ -148,7 +148,10 @@ app.get([
 ], async (req, res) => {
   const config = cfgFrom(req.params.config);
   try {
-    stremioJson(res, await handleMeta(req.params.type, req.params.id, config), { maxAge: 1800 });
+    const metaResult = await handleMeta(req.params.type, req.params.id, config);
+    // Don't cache null results — let Stremio retry next time
+    const age = metaResult && metaResult.meta ? 1800 : 0;
+    stremioJson(res, metaResult, { maxAge: age });
   } catch (err) {
     log.error(`metaRoute: ${err.message}`);
     stremioJson(res, { meta: null });
