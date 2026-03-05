@@ -194,57 +194,40 @@ app.get('/debug/flaresolverr', async (req, res) => {
     result.health = { error: err.message, ms: Date.now() - t0 };
   }
 
-  // Test 2: FlareSolverr step-by-step session diagnostic
+  // Test 2: FlareSolverr session+primer → KissKH catalog + episode API
   const t1 = Date.now();
   const testEpId = req.query.ep || '202614';
   try {
-    const { createSession, destroySession, sessionGet, flareSolverrGetJSONWithPrimer } = require('./src/utils/flaresolverr');
+    const { createSession, destroySession, sessionGet } = require('./src/utils/flaresolverr');
 
-    // Step A: create session
-    const tA = Date.now();
     const sessionId = await createSession();
-    result.step_createSession = { ok: !!sessionId, id: sessionId ? sessionId.slice(0,8) : null, ms: Date.now()-tA };
+    result.sessionCreated = !!sessionId;
     if (!sessionId) { result.totalMs = Date.now()-t0; return res.json(result); }
 
-    // Step B: primer visit — kisskh.co main page
-    const tB = Date.now();
+    // Primer: visit main page to get cf_clearance into session
+    const tP = Date.now();
     const primerBody = await sessionGet('https://kisskh.co/', sessionId);
-    const primerIsCF = !primerBody || primerBody.includes('Just a moment') || primerBody.includes('cf-browser-verification') || primerBody.includes('challenge');
-    result.step_primer = {
-      ok: !!primerBody && !primerIsCF,
-      bodyLen: primerBody ? primerBody.length : 0,
-      preview: primerBody ? primerBody.replace(/<[^>]+>/g,'').trim().slice(0,200) : null,
-      isCFChallenge: primerIsCF,
-      ms: Date.now()-tB,
-    };
+    const isCFBlock = !primerBody ||
+      primerBody.includes('Just a moment') ||
+      primerBody.includes('Checking your browser') ||
+      primerBody.includes('data-cf-challenge') ||
+      (primerBody.includes('www.cloudflare.com') && primerBody.length < 50_000);
+    result.primer = { ok: !!primerBody && !isCFBlock, bodyLen: primerBody?.length ?? 0, isCFBlock, ms: Date.now()-tP };
 
-    // Step C: catalog API (only if primer worked)
-    if (!primerIsCF && primerBody) {
+    if (!isCFBlock && primerBody) {
+      // Catalog API
       const tC = Date.now();
-      const catalogUrl = 'https://kisskh.co/api/DramaList/List?page=1&type=1&sub=0&country=2&status=2&order=3&pageSize=5';
-      const catalogBody = await sessionGet(catalogUrl, sessionId);
-      let catalogData = null;
-      try { catalogData = JSON.parse(catalogBody); } catch {}
-      result.step_catalogApi = {
-        gotJSON: !!catalogData,
-        bodyLen: catalogBody ? catalogBody.length : 0,
-        preview: catalogBody ? catalogBody.slice(0,200) : null,
-        count: catalogData?.data?.length ?? 0,
-        ms: Date.now()-tC,
-      };
+      const catBody = await sessionGet('https://kisskh.co/api/DramaList/List?page=1&type=1&sub=0&country=2&status=2&order=3&pageSize=5', sessionId);
+      let catData = null; try { catData = JSON.parse(catBody); } catch {}
+      result.kisskhCatalogApi = { gotJSON: !!catData, count: catData?.data?.length ?? 0, ms: Date.now()-tC };
 
-      // Step D: episode API
-      const tD = Date.now();
-      const apiUrl = `https://kisskh.co/api/DramaList/Episode/${testEpId}?type=2&sub=0&source=1&quality=auto`;
-      const epBody = await sessionGet(apiUrl, sessionId);
-      let epData = null;
-      try { epData = JSON.parse(epBody); } catch {}
-      result.step_episodeApi = {
-        gotJSON: !!epData,
-        hasVideo: !!(epData?.Video || epData?.video),
-        videoPreview: epData?.Video ? String(epData.Video).slice(0,80) : null,
-        bodyPreview: epBody ? epBody.slice(0,200) : null,
-        ms: Date.now()-tD,
+      // Episode stream API
+      const tE = Date.now();
+      const epBody = await sessionGet(`https://kisskh.co/api/DramaList/Episode/${testEpId}?type=2&sub=0&source=1&quality=auto`, sessionId);
+      let epData = null; try { epData = JSON.parse(epBody); } catch {}
+      result.kisskhEpisodeApi = {
+        gotJSON: !!epData, hasVideo: !!(epData?.Video || epData?.video),
+        videoPreview: epData?.Video ? String(epData.Video).slice(0,80) : null, ms: Date.now()-tE,
       };
     }
 

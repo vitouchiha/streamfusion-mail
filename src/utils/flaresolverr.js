@@ -123,11 +123,18 @@ async function flareSolverrGetJSONWithPrimer(apiUrl, primerUrl = KISSKH_PRIMER) 
       log.warn('primer visit returned null — CF may have hard-blocked Railway IP');
       return null;
     }
-    if (primerBody.includes('Just a moment') || primerBody.includes('cf-browser-verification')) {
-      log.warn('primer: CF challenge NOT resolved');
+    // Detect actual CF challenge page (narrow patterns to avoid false positives on Angular pages)
+    const isCFBlock =
+      primerBody.includes('Just a moment') ||
+      primerBody.includes('Checking your browser') ||
+      primerBody.includes('cf-browser-verification') ||
+      primerBody.includes('data-cf-challenge') ||
+      (primerBody.includes('www.cloudflare.com') && primerBody.length < 50_000);
+    if (isCFBlock) {
+      log.warn(`primer: CF challenge NOT resolved (bodyLen=${primerBody.length})`);
       return null;
     }
-    log.info('primer: CF challenge resolved ✓');
+    log.info(`primer: CF challenge resolved ✓ (bodyLen=${primerBody.length})`);
 
     // Step 2: fetch the API endpoint within the same session (cookies already present)
     const body = await sessionGet(apiUrl, sessionId);
