@@ -468,6 +468,8 @@ Configura il proxy per sbloccare i contenuti da Vercel.</p>
 <div class="providers">
   <div class="ptag">🇰🇷 <b>KissKH</b> Asian Drama</div>
   <div class="ptag">🎞 <b>Rama</b> Korean Fansub</div>
+  <div class="ptag">🇰🇷 <b>Drammatica</b> Sub ITA</div>
+  <div class="ptag">🇰🇷 <b>Guardaserie</b> Sub ITA</div>
 </div>
 
 <div class="card" style="border-color:${proxyOk?'#34d399':'#f87171'}">
@@ -518,7 +520,29 @@ Configura il proxy per sbloccare i contenuti da Vercel.</p>
 </div>
 
 <div class="card">
-  <div class="card-title">🎛️ Provider &amp; Catalogo <span class="badge">Visibilità</span></div>
+  <div class="card-title">🎥 TMDB <span class="badge">Metadata arricchito</span></div>
+  <p style="font-size:.82rem;color:var(--muted);margin-bottom:14px">
+    Arricchisce poster, background, cast, generi e valutazione dei drama di Rama, Drammatica e Guardaserie
+    usando The Movie Database. Gratuito &mdash;
+    <a href="https://www.themoviedb.org/settings/api" target="_blank" style="color:var(--accent-light)">genera la tua API key</a>.
+  </p>
+  <label for="tmdbKey">TMDB API Key (v3 auth)</label>
+  <input id="tmdbKey" type="password" placeholder="Incolla qui la tua TMDB v3 API key" autocomplete="off" spellcheck="false" value="${esc(f.tmdbKey)}"/>
+  <div class="hint">Lascia vuoto per disattivare. Con la chiave attiva, poster e schede dei drama avranno immagini HD e dati completi.</div>
+</div>
+
+<div class="card">
+  <div class="card-title">⭐ RPDB <span class="badge">Poster con rating</span></div>
+  <p style="font-size:.82rem;color:var(--muted);margin-bottom:14px">
+    Sostituisce i poster standard con versioni che mostrano il rating IMDb in sovrimpressione.
+    Richiede TMDB attivo (per ricavare l&rsquo;IMDB ID). <a href="https://ratingposterdb.com" target="_blank" style="color:var(--accent-light)">ratingposterdb.com</a>
+  </p>
+  <label for="rpdbKey">RPDB API Key</label>
+  <input id="rpdbKey" type="password" placeholder="Incolla qui la tua RPDB API key" autocomplete="off" spellcheck="false" value="${esc(f.rpdbKey)}"/>
+  <div class="hint">Funziona solo se TMDB è configurato. Lascia vuoto per disattivare.</div>
+</div>
+
+<div class="card">
 
   <label style="margin-top:0">Provider attivi</label>
   <div class="radio-group" id="providerGroup">
@@ -573,8 +597,11 @@ Configura il proxy per sbloccare i contenuti da Vercel.</p>
     if(c.mfpKey)        o.mfpk=c.mfpKey;
     if(c.proxyUrl)      o.px=c.proxyUrl;
     if(c.hideCatalogs)  o.hc=1;
-    if(c.providers && c.providers!=='all') o.pv=c.providers==='kisskh'?'k':'r';
+    var pvMap={kisskh:'k',rama:'r',drammatica:'d',guardaserie:'g'};
+    if(c.providers && c.providers!=='all') o.pv=pvMap[c.providers]||c.providers;
     if(c.cinemeta)      o.cm=1;
+    if(c.tmdbKey)       o.tm=c.tmdbKey;
+    if(c.rpdbKey)       o.rp=c.rpdbKey;
     return b64url(JSON.stringify(o));
   }
   window.generate=function(){
@@ -585,9 +612,11 @@ Configura il proxy per sbloccare i contenuti da Vercel.</p>
       proxyUrl: document.getElementById('proxyUrl').value.trim(),
       hideCatalogs: document.getElementById('hideCatalogs').checked,
       providers: pvEl ? pvEl.value : 'all',
-      cinemeta: document.getElementById('cinemetaChk').checked
+      cinemeta: document.getElementById('cinemetaChk').checked,
+      tmdbKey: document.getElementById('tmdbKey').value.trim(),
+      rpdbKey: document.getElementById('rpdbKey').value.trim()
     };
-    if(!cfg.mfpUrl&&!cfg.proxyUrl&&!cfg.hideCatalogs&&cfg.providers==='all'&&!cfg.cinemeta){
+    if(!cfg.mfpUrl&&!cfg.proxyUrl&&!cfg.hideCatalogs&&cfg.providers==='all'&&!cfg.cinemeta&&!cfg.tmdbKey&&!cfg.rpdbKey){
       alert('Configura almeno una opzione (Proxy, Provider, o Nascondi cataloghi).');
       return;
     }

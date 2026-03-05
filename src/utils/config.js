@@ -16,8 +16,10 @@
  *   mfpk  → MediaFlow Proxy API key
  *   px    → HTTP proxy URL (for catalog/meta requests blocked by Cloudflare)
  *   hc    → hideCatalogs (1 = yes, omit = no)
- *   pv    → providers: 'a'=all (default), 'k'=kisskh only, 'r'=rama only
+ *   pv    → providers: 'a'=all (default), 'k'=kisskh, 'r'=rama, 'd'=drammatica, 'g'=guardaserie
  *   cm    → cinemeta (1 = enable IMDB stream support, omit = no)
+ *   tm    → TMDB API key (for meta enrichment: poster, background, cast, genres)
+ *   rp    → RPDB API key (for rated poster overlays)
  */
 
 const crypto = require('crypto');
@@ -29,6 +31,8 @@ const DEFAULT_CONFIG = {
   hideCatalogs: false,
   providers:    'all',
   cinemeta:     false,
+  tmdbKey:      '',
+  rpdbKey:      '',
 };
 
 // ─── Encryption helpers ───────────────────────────────────────────────────────
@@ -77,8 +81,11 @@ function encodeConfig(config) {
   if (config.mfpKey)                    obj.mfpk = config.mfpKey.trim();
   if (config.proxyUrl)                  obj.px   = config.proxyUrl.trim();
   if (config.hideCatalogs)              obj.hc   = 1;
-  if (config.providers && config.providers !== 'all') obj.pv = config.providers === 'kisskh' ? 'k' : 'r';
+  const pvMap = { kisskh: 'k', rama: 'r', drammatica: 'd', guardaserie: 'g' };
+  if (config.providers && config.providers !== 'all') obj.pv = pvMap[config.providers] || config.providers;
   if (config.cinemeta)                  obj.cm   = 1;
+  if (config.tmdbKey)                   obj.tm   = config.tmdbKey.trim();
+  if (config.rpdbKey)                   obj.rp   = config.rpdbKey.trim();
   return _encrypt(JSON.stringify(obj));
 }
 
@@ -93,7 +100,7 @@ function decodeConfig(encoded) {
     // Try AES-GCM first
     const json = _decrypt(encoded);
     const obj = JSON.parse(json);
-    const pvMap = { k: 'kisskh', r: 'rama', a: 'all' };
+    const pvMap = { k: 'kisskh', r: 'rama', d: 'drammatica', g: 'guardaserie', a: 'all' };
     return {
       mfpUrl:       (obj.mfp  || '').trim(),
       mfpKey:       (obj.mfpk || '').trim(),
@@ -101,12 +108,14 @@ function decodeConfig(encoded) {
       hideCatalogs: !!obj.hc,
       providers:    pvMap[obj.pv] || 'all',
       cinemeta:     !!obj.cm,
+      tmdbKey:      (obj.tm   || '').trim(),
+      rpdbKey:      (obj.rp   || '').trim(),
     };
   } catch {
     // Legacy fallback: plain base64url (for old install URLs)
     try {
       const obj = JSON.parse(Buffer.from(encoded, 'base64url').toString('utf8'));
-      const pvMap = { k: 'kisskh', r: 'rama', a: 'all' };
+      const pvMap = { k: 'kisskh', r: 'rama', d: 'drammatica', g: 'guardaserie', a: 'all' };
       return {
         mfpUrl:       (obj.mfp  || '').trim(),
         mfpKey:       (obj.mfpk || '').trim(),
@@ -114,6 +123,8 @@ function decodeConfig(encoded) {
         hideCatalogs: !!obj.hc,
         providers:    pvMap[obj.pv] || 'all',
         cinemeta:     !!obj.cm,
+        tmdbKey:      (obj.tm   || '').trim(),
+        rpdbKey:      (obj.rp   || '').trim(),
       };
     } catch {
       return { ...DEFAULT_CONFIG };

@@ -14,7 +14,7 @@ const cheerio = require('cheerio');
 const { fetchWithCloudscraper } = require('../utils/fetcher');
 const { TTLCache } = require('../utils/cache');
 const { extractBaseSlug } = require('../utils/titleHelper');
-const { wrapStreamUrl } = require('../utils/mediaflow');
+const { enrichFromTmdb, rpdbPosterUrl } = require('../utils/tmdb');
 const { createLogger } = require('../utils/logger');
 
 const log = createLogger('rama');
@@ -258,6 +258,27 @@ async function getMeta(id, config = {}) {
     thumbnail: ep.thumbnail || poster || '',
     released: year ? new Date(`${year}-01-01`).toISOString() : '',
   }));
+
+  // ── TMDB enrichment (fills gaps: poster, background, cast, genres, rating) ─
+  if (config.tmdbKey) {
+    const tmdb = await enrichFromTmdb(name, year, config.tmdbKey).catch(() => null);
+    if (tmdb) {
+      if (tmdb.poster)       meta.poster      = tmdb.poster;
+      if (tmdb.background)   meta.background  = tmdb.background;
+      if (!meta.description && tmdb.description) meta.description = tmdb.description;
+      if (!meta.genres?.length && tmdb.genres?.length)   meta.genres  = tmdb.genres;
+      if (!meta.cast?.length  && tmdb.cast?.length)      meta.cast    = tmdb.cast;
+      if (!meta.imdbRating   && tmdb.imdbRating)         meta.imdbRating = tmdb.imdbRating;
+      if (!meta.director     && tmdb.director)           meta.director   = tmdb.director;
+      if (!meta.releaseInfo  && tmdb.releaseInfo)        meta.releaseInfo = tmdb.releaseInfo;
+      if (tmdb.imdbId) meta.imdb_id = tmdb.imdbId;
+      // RPDB rated poster (requires IMDB ID)
+      if (config.rpdbKey && tmdb.imdbId) {
+        const rpdb = rpdbPosterUrl(config.rpdbKey, tmdb.imdbId);
+        if (rpdb) meta.poster = rpdb;
+      }
+    }
+  }
 
   metaCache.set(seriesId, meta);
   return { meta };
