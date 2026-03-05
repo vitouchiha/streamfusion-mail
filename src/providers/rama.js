@@ -15,6 +15,7 @@ const { fetchWithCloudscraper } = require('../utils/fetcher');
 const { TTLCache } = require('../utils/cache');
 const { extractBaseSlug } = require('../utils/titleHelper');
 const { enrichFromTmdb, rpdbPosterUrl } = require('../utils/tmdb');
+const { wrapStreamUrl } = require('../utils/mediaflow');
 const { createLogger } = require('../utils/logger');
 
 const log = createLogger('rama');
@@ -402,19 +403,31 @@ async function _getStreamFromEpisodePage(episodeLink) {
   const $ = cheerio.load(html);
   let url = null;
 
-  // Priority 1 — iframe inside episode player box
-  const iframe = $('div.episode-player-box iframe');
-  if (iframe.length) {
-    url = iframe.attr('src') || iframe.attr('data-src');
+  // Priority 1 — iframe inside player container (broad selector for Rama)
+  $('div.episode-player-box iframe, [class*="player"] iframe, .video-container iframe, #player iframe, .wp-post-content iframe').each((_, el) => {
+    if (url) return false;
+    const src = $(el).attr('src') || $(el).attr('data-src') || '';
+    if (src && !_isAdIframe(src)) url = src;
+  });
+
+  // Priority 2 — any non-ad iframe (Rama puts the player as the first iframe)
+  if (!url) {
+    $('iframe').each((_, el) => {
+      if (url) return false;
+      const src = $(el).attr('src') || $(el).attr('data-src') || '';
+      if (src && !_isAdIframe(src) && (src.startsWith('http') || src.startsWith('//'))) {
+        url = src.startsWith('//') ? 'https:' + src : src;
+      }
+    });
   }
 
-  // Priority 2 — <video> source tag
+  // Priority 3 — <video> source tag
   if (!url) {
     const source = $('video[name="media"] source, video source');
     if (source.length) url = source.attr('src');
   }
 
-  // Priority 3 — direct stream link anchor
+  // Priority 4 — direct stream link anchor
   if (!url) {
     $('a[href]').each((_, el) => {
       const href = $(el).attr('href') || '';
@@ -425,21 +438,32 @@ async function _getStreamFromEpisodePage(episodeLink) {
     });
   }
 
-  // Priority 4 — scan page source for m3u8/mp4
+  // Priority 5 — scan page source for m3u8/mp4 (handles URLs in quotes, even with spaces)
   if (!url) {
-    const match = html.match(/(https?:\/\/[^"'\s]+\.(?:m3u8|mp4)[^"'\s]*)/);
+    // Match URLs delimited by quotes: captures spaces and brackets inside URL
+    const match = html.match(/["'](https?:\/\/[^"']+\.(?:m3u8|mp4)[^"']*?)["']/i);
+    if (match) url = match[1];
+  }
+  // Fallback: strict no-whitespace version
+  if (!url) {
+    const match = html.match(/(https?:\/\/[^"'\s<>]+\.(?:m3u8|mp4)[^"'\s<>]*)/i);
     if (match) url = match[1];
   }
 
   if (url) {
-    url = decodeURI(url);
+    // Encode spaces and brackets that browsers auto-encode but JS strings don't
+    url = url.replace(/ /g, '%20').replace(/\[/g, '%5B').replace(/\]/g, '%5D');
     streamCache.set(cacheKey, url, 2 * 60 * 60_000); // 2h TTL for individual streams
-    log.info('stream found', { episodeLink, url: url.slice(0, 60) });
+    log.info('stream found', { episodeLink, url: url.slice(0, 80) });
   } else {
     log.warn('no stream found', { episodeLink });
   }
 
   return url;
+}
+
+function _isAdIframe(src) {
+  return /a-ads\.com|googleads|doubleclick|facebook\.com\/plugins|syndication|adform|exoclick|adsrvr/i.test(src);
 }
 
 function _qualityLabel(url = '') {
