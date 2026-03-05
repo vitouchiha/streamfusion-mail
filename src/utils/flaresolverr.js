@@ -78,10 +78,15 @@ async function destroySession(sessionId) {
 /**
  * Make a GET request within an existing session.
  * Returns the response body string, or null.
+ * @param {string} url
+ * @param {string} sessionId
+ * @param {object} [headers]  — optional custom headers (e.g. { Accept: 'application/json' })
  */
-async function sessionGet(url, sessionId) {
+async function sessionGet(url, sessionId, headers) {
   log.info(`sessionGet [${sessionId?.slice(0, 8)}] ${url.slice(0, 100)}`);
-  const data = await _post({ cmd: 'request.get', url, session: sessionId, maxTimeout: MAX_TIMEOUT });
+  const payload = { cmd: 'request.get', url, session: sessionId, maxTimeout: MAX_TIMEOUT };
+  if (headers && Object.keys(headers).length) payload.headers = headers;
+  const data = await _post(payload);
   if (data?.status !== 'ok') {
     log.warn(`sessionGet not ok: ${data?.status} — ${data?.message}`);
     return null;
@@ -136,8 +141,15 @@ async function flareSolverrGetJSONWithPrimer(apiUrl, primerUrl = KISSKH_PRIMER) 
     }
     log.info(`primer: CF challenge resolved ✓ (bodyLen=${primerBody.length})`);
 
-    // Step 2: fetch the API endpoint within the same session (cookies already present)
-    const body = await sessionGet(apiUrl, sessionId);
+    // Step 2: fetch the API endpoint within the same session
+    // Pass JSON Accept headers so the server returns JSON instead of the Angular app HTML
+    const JSON_HEADERS = {
+      'Accept': 'application/json, text/plain, */*',
+      'Referer': 'https://kisskh.co/',
+      'Origin': 'https://kisskh.co',
+      'X-Requested-With': 'XMLHttpRequest',
+    };
+    const body = await sessionGet(apiUrl, sessionId, JSON_HEADERS);
     if (!body) return null;
 
     return _parseBody(body);

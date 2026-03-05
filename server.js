@@ -226,9 +226,16 @@ app.get('/debug/flaresolverr', async (req, res) => {
         return null;
       };
 
+      const JSON_HEADERS = {
+        'Accept': 'application/json, text/plain, */*',
+        'Referer': 'https://kisskh.co/',
+        'Origin': 'https://kisskh.co',
+        'X-Requested-With': 'XMLHttpRequest',
+      };
+
       // Catalog API
       const tC = Date.now();
-      const catBody = await sessionGet('https://kisskh.co/api/DramaList/List?page=1&type=1&sub=0&country=2&status=2&order=3&pageSize=5', sessionId);
+      const catBody = await sessionGet('https://kisskh.co/api/DramaList/List?page=1&type=1&sub=0&country=2&status=2&order=3&pageSize=5', sessionId, JSON_HEADERS);
       const catData = parseBody(catBody);
       result.kisskhCatalogApi = { gotJSON: !!catData, count: catData?.data?.length ?? 0, ms: Date.now()-tC };
 
@@ -238,12 +245,12 @@ app.get('/debug/flaresolverr', async (req, res) => {
       let realEpId = testEpId;
       if (catData?.data?.length) {
         const firstSeriesId = catData.data[0].id;
-        const detailBody = await sessionGet(`https://kisskh.co/api/DramaList/Drama/${firstSeriesId}?isq=false`, sessionId);
+        const detailBody = await sessionGet(`https://kisskh.co/api/DramaList/Drama/${firstSeriesId}?isq=false`, sessionId, JSON_HEADERS);
         const detailData = parseBody(detailBody);
         const firstEp = detailData?.episodes?.[0];
         if (firstEp?.id) realEpId = String(firstEp.id);
       }
-      const epBody = await sessionGet(`https://kisskh.co/api/DramaList/Episode/${realEpId}?type=2&sub=0&source=1&quality=auto`, sessionId);
+      const epBody = await sessionGet(`https://kisskh.co/api/DramaList/Episode/${realEpId}?type=2&sub=0&source=1&quality=auto`, sessionId, JSON_HEADERS);
       const epData = parseBody(epBody);
       result.kisskhEpisodeApi = {
         testedEpId: realEpId,
