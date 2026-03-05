@@ -53,30 +53,67 @@ async function _headers() {
 }
 
 /**
- * GET helper: tries without CF cookie first, retries with CF cookie on any failure.
+ * GET helper with three-tier fallback strategy:
+ *   1. Direct axios (fast, often blocked by CF on Vercel datacenter IP)
+ *   2. Axios + CF cookie (same IP issue, but cookie might help marginally)
+ *   3. FlareSolverr + Webshare residential proxy (SLOW ~15s but bypasses CF)
+ *
+ * Strategy 3 is the reliable path for KissKH since Vercel's datacenter IPs
+ * are blocked by Cloudflare Managed Challenge regardless of cookies.
+ *
  * @param {string} url
  * @param {number} [timeout=8000]
+ * @param {string} [proxyUrl]
  * @returns {Promise<any|null>}
  */
 async function _apiGet(url, timeout = 8_000, proxyUrl) {
-  const proxyAgent = proxyUrl ? makeProxyAgent(proxyUrl) : getProxyAgent();
+  const effectiveProxy = proxyUrl || (process.env.PROXY_URL || '').trim() || null;
+  const proxyAgent = effectiveProxy ? makeProxyAgent(effectiveProxy) : getProxyAgent();
   const proxyConfig = proxyAgent ? { httpsAgent: proxyAgent, httpAgent: proxyAgent, proxy: false } : {};
+
+  // 1. Direct axios — fast, works if proxy has clean residential IP
   try {
     const { data } = await axios.get(url, { headers: _baseHeaders(), timeout, ...proxyConfig });
+    log.debug('_apiGet: direct axios success');
     return data;
   } catch (err) {
     const status = err?.response?.status;
-    log.warn(`API call failed (status=${status ?? 'network'}) without CF cookie, retrying with cookie`, { url });
-    // Always retry with CF cookie on any failure
-    try {
-      const headers = await _headers();
-      const { data } = await axios.get(url, { headers, timeout, ...proxyConfig });
-      return data;
-    } catch (err2) {
-      log.error(`API call failed even with CF cookie: ${err2.message}`, { url });
-      return null;
-    }
+    log.warn(`_apiGet: direct failed (status=${status ?? 'network'}), trying CF cookie`, { url });
   }
+
+  // 2. Axios + CF cookie (same datacenter IP, adds minimal benefit but try anyway)
+  try {
+    const headers = await _headers();
+    const { data } = await axios.get(url, { headers, timeout, ...proxyConfig });
+    log.debug('_apiGet: axios+cookie success');
+    return data;
+  } catch (err2) {
+    log.warn(`_apiGet: axios+cookie failed: ${err2.message}, trying FlareSolverr+proxy`, { url });
+  }
+
+  // 3. FlareSolverr + residential proxy — the reliable path for CF-blocked endpoints
+  //    FlareSolverr launches Chrome, routes through Webshare (residential IP),
+  //    solves CF challenge, and returns the JSON response.
+  if (getFlareSolverrUrl()) {
+    const fsProxy = effectiveProxy ? _toStickyProxy(effectiveProxy) : null;
+    log.info(`_apiGet: trying FlareSolverr${fsProxy ? '+proxy' : ''} for ${url.slice(0, 80)}`);
+    const json = await flareSolverrGetJSON(url, Math.max(timeout, 55_000), fsProxy);
+    if (json) {
+      log.info('_apiGet: FlareSolverr success');
+      return json;
+    }
+    log.warn('_apiGet: FlareSolverr also failed');
+  }
+
+  return null;
+}
+
+/**
+ * Convert a rotating proxy URL to a sticky-session one.
+ * Webshare: http://user-rotate:pass@host → http://user-rotate-session-ksfix:pass@host
+ */
+function _toStickyProxy(proxyUrl) {
+  return proxyUrl.replace(/(:\/\/[^:]+?)(:)/, '$1-session-ksfix$2');
 }
 
 // ─── Catalog ─────────────────────────────────────────────────────────────────

@@ -8,6 +8,7 @@
  */
 
 const { launchBrowser } = require('./browser');
+const { flareSolverrGetCookies, getFlareSolverrUrl } = require('./flaresolverr');
 const fs = require('fs').promises;
 const path = require('path');
 const { createLogger } = require('./logger');
@@ -75,7 +76,15 @@ async function getCloudflareCookie(forceRefresh = false) {
     }
   }
 
-  // 3. Fetch via Puppeteer with retry
+  // 3. FlareSolverr + residential proxy (best: cookie is on the same IP as API calls)
+  const cookieViaFS = await _fetchCookieViaFlareSolverr();
+  if (cookieViaFS) {
+    _memCache.set('cf', { value: cookieViaFS, ts: Date.now() });
+    await _saveToDisk(cookieViaFS);
+    return cookieViaFS;
+  }
+
+  // 4. Fetch via Puppeteer (Browserless) with retry — last resort, often blocked by CF on datacenter IP
   let lastErr;
   for (let i = 1; i <= MAX_RETRIES; i++) {
     try {
@@ -90,11 +99,63 @@ async function getCloudflareCookie(forceRefresh = false) {
     }
   }
 
-  log.error(`All CF cookie attempts failed: ${lastErr.message}`);
+  log.error(`All CF cookie attempts failed: ${lastErr?.message}`);
   return '';   // Return empty instead of throwing — some endpoints work without cookie
 }
 
 // ─── Internal helpers ────────────────────────────────────────────────────────
+
+/**
+ * Use FlareSolverr + Webshare residential proxy to generate a valid cf_clearance.
+ * Both the CF challenge and subsequent Cookie use the SAME residential exit IP.
+ *
+ * Webshare sticky session format:
+ *   http://USER-rotate-session-FIXED:PASS@p.webshare.io:80
+ * (replace FIXED with any constant string — pins exit IP for the session)
+ */
+async function _fetchCookieViaFlareSolverr() {
+  if (!getFlareSolverrUrl()) return null;
+  const rawProxy = (process.env.PROXY_URL || '').trim();
+  if (!rawProxy) {
+    log.debug('PROXY_URL not set — skipping FlareSolverr cookie path');
+    return null;
+  }
+
+  // Convert rotating proxy → sticky session (same exit IP for challenge + cookie)
+  const stickyProxy = _toStickyProxy(rawProxy);
+  log.info('fetching CF cookie via FlareSolverr+proxy', { proxy: stickyProxy.slice(0, 40) + '...' });
+
+  try {
+    const cookies = await flareSolverrGetCookies(
+      'https://kisskh.co/',
+      55_000,
+      stickyProxy,
+    );
+    if (!cookies) return null;
+    const cf = cookies.find(c => c.name === 'cf_clearance');
+    if (!cf) {
+      log.warn('FlareSolverr+proxy: cf_clearance not found in cookies');
+      return null;
+    }
+    log.info('CF cookie obtained via FlareSolverr+proxy');
+    return `cf_clearance=${cf.value}`;
+  } catch (err) {
+    log.warn(`FlareSolverr+proxy cookie fetch failed: ${err.message}`);
+    return null;
+  }
+}
+
+/**
+ * Convert a Webshare rotating proxy URL to a sticky-session URL.
+ * Sticky format pins the exit node for the duration of the session.
+ * Examples:
+ *   http://abc-rotate:pass@p.webshare.io:80  →  http://abc-rotate-session-ksfix:pass@p.webshare.io:80
+ *   http://abc:pass@host:port                →  unchanged (non-Webshare, return as-is)
+ */
+function _toStickyProxy(proxyUrl) {
+  // Webshare rotating proxy — inject -session-FIXED after the username to pin exit IP
+  return proxyUrl.replace(/(:\/\/[^:]+?)(:)/, '$1-session-ksfix$2');
+}
 
 function _isCachedValid() {
   const entry = _memCache.get('cf');
