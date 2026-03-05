@@ -78,6 +78,9 @@ function cfgFrom(param) {
 function stremioJson(res, data, { maxAge = 0 } = {}) {
   if (maxAge > 0) {
     res.setHeader('Cache-Control', `public, max-age=${maxAge}, stale-while-revalidate=${maxAge * 3}`);
+  } else {
+    // Explicitly prevent Vercel Edge CDN from caching empty/null responses
+    res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
   }
   res.setHeader('Content-Type', 'application/json');
   res.json(data);
