@@ -29,7 +29,7 @@ const { createLogger } = require('../utils/logger');
 const log = createLogger('aggregator');
 
 // Configurable timeouts (ms)
-const CATALOG_TIMEOUT  = Number(process.env.CATALOG_TIMEOUT)  || 9_000;
+const CATALOG_TIMEOUT  = Number(process.env.CATALOG_TIMEOUT)  || 25_000;
 const META_TIMEOUT     = Number(process.env.META_TIMEOUT)     || 30_000;
 const STREAM_TIMEOUT   = Number(process.env.STREAM_TIMEOUT)   || 45_000;
 const CINEMETA_TIMEOUT = 5_000;
@@ -55,7 +55,7 @@ async function handleCatalog(type, catalogId, extra = {}, config = {}) {
       return { metas };
     }
 
-    if (catalogId === 'rama_catalog' || type === 'kdrama') {
+    if (catalogId === 'rama_catalog') {
       const metas = await withTimeout(rama.getCatalog(skip, search, config), CATALOG_TIMEOUT, 'rama.getCatalog');
       return { metas };
     }

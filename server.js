@@ -132,7 +132,9 @@ app.get([
   const config = cfgFrom(req.params.config);
   const extra  = parseExtra(req.params.extra);
   try {
-    stremioJson(res, await handleCatalog(req.params.type, req.params.id, extra, config), { maxAge: 300 });
+    const result = await handleCatalog(req.params.type, req.params.id, extra, config);
+    const age = result.metas && result.metas.length > 0 ? 300 : 0;
+    stremioJson(res, result, { maxAge: age });
   } catch (err) {
     log.error(`catalogRoute: ${err.message}`);
     stremioJson(res, { metas: [] });
@@ -160,7 +162,9 @@ app.get([
 ], async (req, res) => {
   const config = cfgFrom(req.params.config);
   try {
-    stremioJson(res, await handleStream(req.params.type, req.params.id, config), { maxAge: 3600 });
+    const result = await handleStream(req.params.type, req.params.id, config);
+    const age = result.streams && result.streams.length > 0 ? 3600 : 0;
+    stremioJson(res, result, { maxAge: age });
   } catch (err) {
     log.error(`streamRoute: ${err.message}`);
     stremioJson(res, { streams: [] });
