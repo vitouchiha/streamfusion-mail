@@ -5,6 +5,22 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) · Versi
 
 ---
 
+## [1.3.3] — 2026-05-08
+
+### Removed
+- **Guardaserie provider** rimosso — già presente in altri addon; tolto da `manifest.json` (catalog + idPrefix), da `src/providers/index.js` (routing, import, `_guardaserieStreamsForTitle`) e dalla landing page.
+
+### Fixed
+- **KissKH stream vuoti quando FlareSolverr è configurato** — `_fetchStreamViaApi` aveva `return null` fisso dopo il blocco FlareSolverr, impedendo il fallback a axios diretto anche quando `api.kisskh.co` è raggiungibile senza CF cookie (verificato: 200 ms 900 via proxy). Ora il flusso è:
+  1. FlareSolverr (max 25 s hard cap via `Promise.race`)
+  2. axios diretto con proxy (no cookie, funziona su `api.kisskh.co`)
+  3. cookie CF_CLEARANCE_KISSKH (fallback finale)
+
+### Added
+- **Debug endpoint `/debug/drammatica`** — ispeziona la struttura HTML di drammatica.it per diagnosi selettori.
+
+---
+
 ## [1.3.2] — 2026-03-05
 
 ### Fixed (stream Rama — bug critico)

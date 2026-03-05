@@ -1,8 +1,8 @@
 {
   "id": "org.streamfusion.mail",
-  "version": "1.3.2",
+  "version": "1.3.3",
   "name": "StreamFusion Mail",
-  "description": "Aggregatore flussi streaming multi-provider per Stremio — Korean Drama & Asian Drama con sub ITA (KissKH, Rama, Drammatica, Guardaserie)",
+  "description": "Aggregatore flussi streaming multi-provider per Stremio — Korean Drama & Asian Drama con sub ITA (KissKH, Rama, Drammatica)",
   "logo": "https://i.imgur.com/i7VdVv7.png",
   "background": "https://i.imgur.com/mtsxMk7.jpeg",
   "catalogs": [
@@ -32,20 +32,11 @@
         { "name": "search", "isRequired": false },
         { "name": "skip", "isRequired": false }
       ]
-    },
-    {
-      "type": "kdrama",
-      "id": "guardaserie_catalog",
-      "name": "Asian Drama (Guardaserie)",
-      "extra": [
-        { "name": "search", "isRequired": false },
-        { "name": "skip", "isRequired": false }
-      ]
     }
   ],
   "resources": ["catalog", "meta", "stream"],
   "types": ["series", "kdrama"],
-  "idPrefixes": ["kisskh_", "rama_", "drammatica_", "guardaserie_"],
+  "idPrefixes": ["kisskh_", "rama_", "drammatica_"],
   "behaviorHints": {
     "configurable": true
   }

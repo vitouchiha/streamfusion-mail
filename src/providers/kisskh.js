@@ -381,95 +381,130 @@ async function _fetchStreamViaApi(serieId, episodeId, proxyUrl) {
     return null;
   };
 
-  // ── 1. FlareSolverr 3-step session approach ──────────────────────────────
-  //   Step A: primer (kisskh.co homepage → cf_clearance cookie)
-  //   Step B: drama page visit (get drama-scoped cookies/tokens, establish Referer)
-  //   Step C: episode API call with Referer = drama page (returns JSON video URL)
+  // ── 1. FlareSolverr 3-step session approach (hard 25 s cap) ──────────────
+  //   If FlareSolverr is configured, try it first with a strict timeout so we
+  //   still have room for the direct-axios fallback within STREAM_TIMEOUT.
   if (getFlareSolverrUrl()) {
-    const sessionId = await createSession().catch(() => null);
-    if (!sessionId) {
-      log.warn('FlareSolverr: createSession failed');
-      return null;
-    }
-
-    try {
-      // Step A: CF primer
-      log.info('FS stream: visiting primer', { episodeId });
-      const primerBody = await sessionGet(SITE_BASE + '/', sessionId).catch(() => null);
-      const isCFBlock = !primerBody ||
-        primerBody.includes('Just a moment') ||
-        primerBody.includes('Checking your browser') ||
-        primerBody.includes('data-cf-challenge') ||
-        (primerBody.includes('www.cloudflare.com') && primerBody.length < 50_000);
-      if (isCFBlock) {
-        log.warn('FS stream: CF challenge NOT resolved on primer');
-        return null;
-      }
-
-      // Step B: visit drama episode page (establishes Referer context + drama cookies)
-      const dramaPageUrl = `${SITE_BASE}/Drama/Any/Episode-Any?id=${serieId}&ep=${episodeId}`;
-      log.info('FS stream: visiting drama page', { dramaPageUrl });
-      await sessionGet(dramaPageUrl, sessionId).catch(() => null);  // best-effort
-
-      // Step C: episode API with drama page as Referer
-      const apiHeaders = {
-        'Accept': 'application/json, text/plain, */*',
-        'Referer': dramaPageUrl,
-        'Origin': SITE_BASE,
-        'X-Requested-With': 'XMLHttpRequest',
-      };
-      for (const [type, source] of [[2, 1], [1, 0]]) {
-        const url = `${API_BASE}/DramaList/Episode/${episodeId}?type=${type}&sub=0&source=${source}&quality=auto`;
-        log.info(`FS stream: episode API type=${type} source=${source}`, { episodeId });
-        const body = await sessionGet(url, sessionId, apiHeaders).catch(() => null);
-        const data = _parseBody(body);
-        const result = data ? _parseVideoData(data) : null;
-        if (result) {
-          log.info(`FS stream: found (type=${type},source=${source})`, { url: result.streamUrl.slice(0, 80) });
-          return result;
+    const FS_STREAM_TIMEOUT = 25_000; // ms hard cap for this block
+    const fsResult = await Promise.race([
+      (async () => {
+        const sessionId = await createSession().catch(() => null);
+        if (!sessionId) {
+          log.warn('FlareSolverr: createSession failed');
+          return null;
         }
-      }
-      log.warn('FS stream: no video URL found in any API variant', { episodeId });
-    } finally {
-      destroySession(sessionId);
-    }
-    return null;
+        try {
+          // Step A: CF primer
+          log.info('FS stream: visiting primer', { episodeId });
+          const primerBody = await sessionGet(SITE_BASE + '/', sessionId).catch(() => null);
+          const isCFBlock = !primerBody ||
+            primerBody.includes('Just a moment') ||
+            primerBody.includes('Checking your browser') ||
+            primerBody.includes('data-cf-challenge') ||
+            (primerBody.includes('www.cloudflare.com') && primerBody.length < 50_000);
+          if (isCFBlock) {
+            log.warn('FS stream: CF challenge NOT resolved on primer');
+            return null;
+          }
+
+          // Step B: visit drama episode page (establishes Referer context + drama cookies)
+          const dramaPageUrl = `${SITE_BASE}/Drama/Any/Episode-Any?id=${serieId}&ep=${episodeId}`;
+          log.info('FS stream: visiting drama page', { dramaPageUrl });
+          await sessionGet(dramaPageUrl, sessionId).catch(() => null);  // best-effort
+
+          // Step C: episode API with drama page as Referer
+          const apiHeaders = {
+            'Accept': 'application/json, text/plain, */*',
+            'Referer': dramaPageUrl,
+            'Origin': SITE_BASE,
+            'X-Requested-With': 'XMLHttpRequest',
+          };
+          for (const [type, source] of [[2, 1], [1, 0]]) {
+            const url = `${API_BASE}/DramaList/Episode/${episodeId}?type=${type}&sub=0&source=${source}&quality=auto`;
+            log.info(`FS stream: episode API type=${type} source=${source}`, { episodeId });
+            const body = await sessionGet(url, sessionId, apiHeaders).catch(() => null);
+            const data = _parseBody(body);
+            const result = data ? _parseVideoData(data) : null;
+            if (result) {
+              log.info(`FS stream: found (type=${type},source=${source})`, { url: result.streamUrl.slice(0, 80) });
+              return result;
+            }
+          }
+          log.warn('FS stream: no video URL found in any API variant', { episodeId });
+          return null;
+        } finally {
+          destroySession(sessionId);
+        }
+      })(),
+      new Promise(r => setTimeout(() => { log.warn('FlareSolverr stream: 25 s cap exceeded, falling back'); r(null); }, FS_STREAM_TIMEOUT)),
+    ]);
+
+    if (fsResult) return fsResult;
+    log.info('FlareSolverr stream failed/timed out — trying direct axios fallback');
   }
 
-  // ── 2. Direct axios + cf_clearance cookie ────────────────────────────────
-  const cfClearance = (process.env.CF_CLEARANCE_KISSKH || '').trim();
-  if (!cfClearance) {
-    log.debug('No FLARESOLVERR_URL and no CF_CLEARANCE_KISSKH — cannot bypass CF');
-    return null;
-  }
-
-  const cookieVal = cfClearance.startsWith('cf_clearance=') ? cfClearance : `cf_clearance=${cfClearance}`;
-  const headers = { ..._baseHeaders(), 'Cookie': cookieVal };
-  const proxyAgent = proxyUrl ? makeProxyAgent(proxyUrl) : getProxyAgent();
-  const proxyConfig = proxyAgent ? { httpsAgent: proxyAgent, httpAgent: proxyAgent, proxy: false } : {};
-
+  // ── 2. Direct axios with proxy (api.kisskh.co is reachable without CF cookie) ──
+  const proxyAgent2 = proxyUrl ? makeProxyAgent(proxyUrl) : getProxyAgent();
+  const proxyCfg   = proxyAgent2 ? { httpsAgent: proxyAgent2, httpAgent: proxyAgent2, proxy: false } : {};
+  const dramaPageReferer = `${SITE_BASE}/Drama/Any/Episode-Any?id=${serieId}&ep=${episodeId}`;
+  const directHeaders = {
+    ..._baseHeaders(),
+    'Accept': 'application/json, text/plain, */*',
+    'Referer': dramaPageReferer,
+    'Origin': SITE_BASE,
+    'X-Requested-With': 'XMLHttpRequest',
+  };
   for (const [type, source] of [[2, 1], [1, 0], [2, 0], [1, 1]]) {
     const url = `${API_BASE}/DramaList/Episode/${episodeId}?type=${type}&sub=0&source=${source}&quality=auto`;
     try {
-      log.debug(`cookie API try type=${type} source=${source}`, { episodeId });
-      const { data } = await axios.get(url, { headers, timeout: 8_000, ...proxyConfig });
-      // Detect CF HTML response (cookie from different client/fingerprint)
+      log.debug(`direct axios type=${type} source=${source}`, { episodeId });
+      const { data } = await axios.get(url, { headers: directHeaders, timeout: 8_000, ...proxyCfg });
       if (typeof data === 'string' && (data.includes('<html') || data.includes('Just a moment'))) {
-        log.debug(`cookie API: CF challenge returned for type=${type}`);
-        break; // All combos will fail the same way
+        log.debug('direct axios: CF challenge — giving up on direct');
+        break;
       }
       const result = _parseVideoData(data);
       if (result) {
-        log.info(`cookie API stream found (type=${type},source=${source})`, { episodeId, url: result.streamUrl.slice(0, 80) });
+        log.info(`direct axios: stream found (type=${type},source=${source})`, { episodeId, url: result.streamUrl.slice(0, 80) });
         return result;
       }
     } catch (err) {
-      const status = err?.response?.status;
-      log.debug(`cookie API type=${type} source=${source} failed: ${status ?? err.message}`);
+      log.debug(`direct axios type=${type} source=${source} failed: ${err?.response?.status ?? err.message}`);
     }
   }
 
-  log.warn('cookie API: no stream URL found', { episodeId });
+  // ── 3. CF clearance cookie fallback ──────────────────────────────────────
+  const cfClearance = (process.env.CF_CLEARANCE_KISSKH || '').trim();
+  if (cfClearance) {
+    const cookieVal = cfClearance.startsWith('cf_clearance=') ? cfClearance : `cf_clearance=${cfClearance}`;
+    const cookieHeaders = { ..._baseHeaders(), 'Cookie': cookieVal };
+    const proxyAgent = proxyUrl ? makeProxyAgent(proxyUrl) : getProxyAgent();
+    const proxyConfig = proxyAgent ? { httpsAgent: proxyAgent, httpAgent: proxyAgent, proxy: false } : {};
+
+    for (const [type, source] of [[2, 1], [1, 0], [2, 0], [1, 1]]) {
+      const url = `${API_BASE}/DramaList/Episode/${episodeId}?type=${type}&sub=0&source=${source}&quality=auto`;
+      try {
+        log.debug(`cookie API try type=${type} source=${source}`, { episodeId });
+        const { data } = await axios.get(url, { headers: cookieHeaders, timeout: 8_000, ...proxyConfig });
+        if (typeof data === 'string' && (data.includes('<html') || data.includes('Just a moment'))) {
+          log.debug(`cookie API: CF challenge returned for type=${type}`);
+          break;
+        }
+        const result = _parseVideoData(data);
+        if (result) {
+          log.info(`cookie API stream found (type=${type},source=${source})`, { episodeId, url: result.streamUrl.slice(0, 80) });
+          return result;
+        }
+      } catch (err) {
+        const status = err?.response?.status;
+        log.debug(`cookie API type=${type} source=${source} failed: ${status ?? err.message}`);
+      }
+    }
+    log.warn('cookie API: no stream URL found', { episodeId });
+  } else {
+    log.debug('No CF_CLEARANCE_KISSKH configured');
+  }
+
   return null;
 }
 

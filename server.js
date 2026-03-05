@@ -359,6 +359,37 @@ app.get('/debug/browser', requireDebugAuth, async (req, res) => {
   }
 });
 
+app.get('/debug/drammatica', requireDebugAuth, async (req, res) => {
+  const { fetchWithCloudscraper } = require('./src/utils/fetcher');
+  const cheerio = require('cheerio');
+  const proxyUrl = (process.env.PROXY_URL || '').trim();
+  const BASE_URL = 'https://www.drammatica.it';
+  const PATHS = ['/drama/', '/k-drama/', '/serie/', '/archivio/', '/'];
+  const result = { proxyConfigured: !!proxyUrl, paths: {} };
+
+  for (const path of PATHS) {
+    const url = BASE_URL + path;
+    const t0 = Date.now();
+    try {
+      const html = await fetchWithCloudscraper(url, { referer: BASE_URL, proxyUrl });
+      if (!html) { result.paths[path] = { ok: false, error: 'empty response', ms: Date.now()-t0 }; continue; }
+      const $ = cheerio.load(html);
+      const title = $('title').text().trim().slice(0, 80);
+      const cfBlocked = html.includes('Just a moment') || html.includes('Checking your browser') || (html.includes('cloudflare.com') && html.length < 40_000);
+      const articleCount = $('article').length;
+      const h2Links = $('article h2 a[href], article h3 a[href], .entry-title a[href], article a[rel="bookmark"]').length;
+      const firstHrefs = [];
+      $('article a[href]').slice(0, 5).each((_, el) => firstHrefs.push($(el).attr('href')));
+      const firstClasses = [];
+      $('article').slice(0, 3).each((_, el) => firstClasses.push($(el).attr('class') || ''));
+      result.paths[path] = { ok: true, htmlLen: html.length, title, cfBlocked, articleCount, h2Links, firstHrefs, firstClasses, ms: Date.now()-t0 };
+    } catch (err) {
+      result.paths[path] = { ok: false, error: err.message, ms: Date.now()-t0 };
+    }
+  }
+  res.json(result);
+});
+
 // ─── Landing Page ─────────────────────────────────────────────────────────────
 
 app.get('/', (req, res) => {
