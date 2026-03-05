@@ -277,6 +277,16 @@ app.get('/:config', (req, res, next) => {
   res.send(buildPage(req.protocol + '://' + req.get('host'), cfg, req.params.config, _serverStatus()));
 });
 
+// Stremio "Configure" button opens: transportUrl.replace('/manifest.json','') + '/configure'
+// (some Stremio versions append /configure explicitly — handle both)
+app.get(['/configure', '/:config/configure'], (req, res, next) => {
+  const raw = req.params.config;
+  if (raw && !isValidConfig(raw)) return next();
+  const cfg = raw ? decodeConfig(raw) : null;
+  res.setHeader('Content-Type', 'text/html; charset=utf-8');
+  res.send(buildPage(req.protocol + '://' + req.get('host'), cfg, raw || null, _serverStatus()));
+});
+
 function _serverStatus() {
   return {
     proxyOk: !!(process.env.PROXY_URL || '').trim(),

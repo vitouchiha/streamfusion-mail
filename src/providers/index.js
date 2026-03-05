@@ -229,32 +229,55 @@ async function _ramaStreamsForTitle(title, episodeNum, config) {
 }
 
 /**
+ * Normalise a title for comparison: lowercase, remove punctuation, collapse spaces.
+ * Handles both English and romanised Korean titles better.
+ */
+function _normaliseTitle(t) {
+  return (t || '')
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, ' ')  // strip punctuation
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+/**
  * Pick the best-matching meta item from a catalog result by title similarity.
+ * Tries exact normalised match first, then similarity score.
  */
 function _bestMatch(metas, queryTitle) {
+  const normQuery = _normaliseTitle(queryTitle);
+
+  // 1. Exact normalised match
+  const exact = metas.find(m => _normaliseTitle(m.name || m.title || '') === normQuery);
+  if (exact) return exact;
+
+  // 2. Best fuzzy match (threshold 0.45 — slightly more permissive for romanised titles)
   let bestScore = 0;
   let bestItem  = null;
   for (const m of metas) {
-    const score = titleSimilarity(m.name || m.title || '', queryTitle);
+    const score = titleSimilarity(_normaliseTitle(m.name || m.title || ''), normQuery);
     if (score > bestScore) { bestScore = score; bestItem = m; }
   }
-  // Require at least 50% similarity to avoid wild mismatches
-  return bestScore >= 0.5 ? bestItem : null;
+  return bestScore >= 0.45 ? bestItem : null;
 }
 
 /**
  * Find a video in a videos array by season + episode number.
- * Falls back to just episode number if season is null.
+ * Handles both KissKH (uses `episode` field) and Rama (uses `number` field).
  */
 function _matchEpisode(videos, seasonNum, episodeNum) {
   if (!episodeNum) return videos[0] || null;
+
+  // Normalise: accept `episode` OR `number` on each video
+  const epNum = v => v.episode ?? v.number ?? null;
+
   // Exact match: season + episode
   if (seasonNum) {
-    const exact = videos.find(v => v.season === seasonNum && v.episode === episodeNum);
+    const exact = videos.find(v => v.season === seasonNum && epNum(v) === episodeNum);
     if (exact) return exact;
   }
-  // Fallback: just episode number (Korean dramas often have season=1 always)
-  return videos.find(v => v.episode === episodeNum) || null;
+  // Fallback: just episode / sequential number (Korean dramas always season=1)
+  return videos.find(v => epNum(v) === episodeNum) || null;
 }
 
 // ─── Native-prefix provider dispatch ─────────────────────────────────────────

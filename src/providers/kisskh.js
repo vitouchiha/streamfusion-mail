@@ -406,15 +406,15 @@ async function _extractStreamAndSubs(serieId, episodeId) {
         return;
       }
       const u = req.url();
-      const rt2 = req.resourceType();
-      // Log XHR/fetch to debug what endpoints are called
-      if (!streamUrl && (rt2 === 'xhr' || rt2 === 'fetch' || u.includes('.m3u8') || u.includes('stream') || u.includes('video'))) {
-        log.debug(`[intercept] ${rt2} ${u.slice(0, 120)}`);
+      // Log XHR/fetch for debugging
+      if (!streamUrl && (rt === 'xhr' || rt === 'fetch')) {
+        log.debug(`[intercept] ${rt} ${u.slice(0, 120)}`);
       }
-      // Intercept ANY HLS stream URL (not just ?v= format — format may have changed)
-      if (!streamUrl && /\.m3u8/i.test(u)) {
+      // Intercept HLS stream — prefer URLs with ?v= (kisskh CDN token), fall back to any .m3u8
+      if (!streamUrl && /\.m3u8(\?.*)?$/i.test(u)) {
         streamUrl = u;
-        log.info(`intercepted stream: ${u.slice(0, 120)}`);
+        const hasV  = /[?&]v=[a-zA-Z0-9]+/.test(u);
+        log.info(`intercepted stream (hasVParam=${hasV}): ${u.slice(0, 120)}`);
       }
       // Intercept subtitle API endpoint
       if (!subApiUrl && u.includes('/api/Sub/')) {
@@ -427,8 +427,9 @@ async function _extractStreamAndSubs(serieId, episodeId) {
     const targetUrl = `${SITE_BASE}/Drama/Any/Episode-Any?id=${serieId}&ep=${episodeId}`;
     log.info('navigating to episode page', { targetUrl });
 
-    // Use 'load' + manual wait so we can exit early once both URLs found
-    await page.goto(targetUrl, { waitUntil: 'load', timeout: MAX_WAIT }).catch((e) => {
+    // Use 'domcontentloaded' — faster than 'networkidle2', CF challenge resolves faster
+    // then we let the polling loop wait for the HLS intercept
+    await page.goto(targetUrl, { waitUntil: 'domcontentloaded', timeout: MAX_WAIT }).catch((e) => {
       log.warn(`page.goto warning: ${e.message.slice(0, 80)}`);
     });
 
@@ -437,9 +438,14 @@ async function _extractStreamAndSubs(serieId, episodeId) {
       const finalUrl = page.url();
       const title = await page.title().catch(() => '');
       log.info('page loaded', { finalUrl: finalUrl.slice(0, 100), title: title.slice(0, 60) });
+      if (title.toLowerCase().includes('just a moment')) {
+        log.warn('CF challenge detected — waiting for auto-resolution...');
+      }
     } catch (_) {}
 
-    // Poll until both found or timeout
+    // Give the video player 3s to start loading after the DOM is ready,
+    // then poll until both m3u8 + sub are intercepted (or timeout).
+    await _sleep(3_000);
     const deadline = Date.now() + MAX_WAIT;
     while (Date.now() < deadline && !(streamUrl && subApiUrl)) {
       await _sleep(500);

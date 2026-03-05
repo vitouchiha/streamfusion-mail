@@ -27,5 +27,8 @@
   ],
   "resources": ["catalog", "meta", "stream"],
   "types": ["series", "kdrama"],
-  "idPrefixes": ["kisskh_", "rama_"]
+  "idPrefixes": ["kisskh_", "rama_"],
+  "behaviorHints": {
+    "configurable": true
+  }
 }
