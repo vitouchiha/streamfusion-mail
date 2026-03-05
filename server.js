@@ -215,19 +215,30 @@ app.get('/debug/flaresolverr', async (req, res) => {
     result.primer = { ok: !!primerBody && !isCFBlock, bodyLen: primerBody?.length ?? 0, isCFBlock, ms: Date.now()-tP };
 
     if (!isCFBlock && primerBody) {
+      // Chrome wraps JSON API responses in <pre> tags — strip HTML before parsing
+      const parseBody = (b) => {
+        if (!b) return null;
+        const t = b.trim();
+        if (t.startsWith('{') || t.startsWith('[')) { try { return JSON.parse(t); } catch {} }
+        const m = t.match(/<pre[^>]*>([\s\S]*?)<\/pre>/i);
+        if (m) { try { return JSON.parse(m[1]); } catch {} }
+        try { return JSON.parse(t.replace(/<[^>]+>/g, '').trim()); } catch {}
+        return null;
+      };
+
       // Catalog API
       const tC = Date.now();
       const catBody = await sessionGet('https://kisskh.co/api/DramaList/List?page=1&type=1&sub=0&country=2&status=2&order=3&pageSize=5', sessionId);
-      let catData = null; try { catData = JSON.parse(catBody); } catch {}
+      const catData = parseBody(catBody);
       result.kisskhCatalogApi = { gotJSON: !!catData, count: catData?.data?.length ?? 0, ms: Date.now()-tC };
 
       // Episode stream API
       const tE = Date.now();
       const epBody = await sessionGet(`https://kisskh.co/api/DramaList/Episode/${testEpId}?type=2&sub=0&source=1&quality=auto`, sessionId);
-      let epData = null; try { epData = JSON.parse(epBody); } catch {}
+      const epData = parseBody(epBody);
       result.kisskhEpisodeApi = {
         gotJSON: !!epData, hasVideo: !!(epData?.Video || epData?.video),
-        videoPreview: epData?.Video ? String(epData.Video).slice(0,80) : null, ms: Date.now()-tE,
+        videoPreview: epData?.Video ? String(epData.Video).slice(0, 80) : null, ms: Date.now()-tE,
       };
     }
 

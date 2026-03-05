@@ -140,19 +140,44 @@ async function flareSolverrGetJSONWithPrimer(apiUrl, primerUrl = KISSKH_PRIMER) 
     const body = await sessionGet(apiUrl, sessionId);
     if (!body) return null;
 
-    try {
-      return JSON.parse(body);
-    } catch {
-      if (body.includes('<html') || body.includes('Just a moment')) {
-        log.warn('API response is CF HTML, not JSON');
-        return null;
-      }
-      log.warn('API response is not valid JSON');
-      return null;
-    }
+    return _parseBody(body);
   } finally {
     destroySession(sessionId); // fire-and-forget cleanup
   }
+}
+
+/**
+ * Parse a response body from FlareSolverr/Chrome into a JS object.
+ * Chrome wraps JSON API responses in an HTML document with a <pre> tag:
+ *   <html><body><pre>{"data":[...]}</pre></body></html>
+ * We try raw JSON first, then strip HTML.
+ */
+function _parseBody(body) {
+  if (!body) return null;
+
+  // 1. Raw JSON (ideal)
+  const trimmed = body.trim();
+  if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
+    try { return JSON.parse(trimmed); } catch {}
+  }
+
+  // 2. Chrome JSON viewer: content is inside the first <pre> tag
+  const preMatch = trimmed.match(/<pre[^>]*>([\s\S]*?)<\/pre>/i);
+  if (preMatch) {
+    try { return JSON.parse(preMatch[1]); } catch {}
+  }
+
+  // 3. Strip ALL tags
+  const stripped = trimmed.replace(/<[^>]+>/g, '').trim();
+  try { return JSON.parse(stripped); } catch {}
+
+  // 4. Still CF challenge?
+  if (trimmed.includes('Just a moment') || trimmed.includes('Checking your browser')) {
+    log.warn('Body is still a CF challenge after primer');
+  } else {
+    log.warn(`Body is not JSON (length=${body.length}, preview=${body.slice(0,100)})`);
+  }
+  return null;
 }
 
 /**
