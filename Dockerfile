@@ -22,7 +22,7 @@ COPY --chown=user:user package.json ./
 RUN npm install --omit=dev --ignore-scripts
 
 COPY --chown=user:user . .
-RUN chmod +x /app/start.sh
+RUN chmod +x /app/start.sh && sed -i 's/\r$//' /app/start.sh
 
 ENV NODE_ENV=production \
     PORT=7860 \
