@@ -22,9 +22,9 @@
     "https-proxy-agent": "^7.0.6",
     "puppeteer-core": "^24.9.0",
     "puppeteer-extra": "^3.3.6",
-    "puppeteer-extra-plugin-stealth": "^2.11.2",
     "request": "^2.88.2",
     "request-promise": "^4.2.6",
+    "safe-stealth": "npm:puppeteer-extra-plugin-stealth@^2.11.2",
     "stremio-addon-sdk": "^1.1.4"
   },
   "devDependencies": {
