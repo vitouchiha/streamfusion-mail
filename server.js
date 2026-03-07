@@ -293,6 +293,51 @@ app.get('/debug/providers-stream', requireDebugAuth, async (req, res) => {
     return res.status(400).json({ error: 'Use an IMDb id (tt...) in ?id=tt1234567:1:1' });
   }
 
+  const classifyError = (err) => {
+    const msg = String(err?.message || err || '').toLowerCase();
+    const code = String(err?.code || '').toUpperCase();
+    const status = err?.response?.status || null;
+    if (msg.startsWith('timeout:')) return { kind: 'timeout', code, status };
+    if (code === 'ENOTFOUND' || code === 'EAI_AGAIN' || msg.includes('enotfound') || msg.includes('getaddrinfo')) {
+      return { kind: 'dns', code, status };
+    }
+    if (status === 403 || status === 429 || msg.includes('cloudflare') || msg.includes('just a moment')) {
+      return { kind: 'cloudflare', code, status };
+    }
+    if (status) return { kind: 'http', code, status };
+    if (msg.includes('cannot find module')) return { kind: 'module', code, status };
+    return { kind: 'runtime', code, status };
+  };
+
+  const resolveTitleForDebug = async () => {
+    const out = { imdbId, source: null, title: null, error: null };
+    try {
+      const axios = require('axios');
+      const metaType = type === 'movie' ? 'movie' : 'series';
+      const r = await axios.get(`https://v3-cinemeta.strem.io/meta/${metaType}/${imdbId}.json`, { timeout: 5000 });
+      const title = r?.data?.meta?.name || null;
+      if (title) {
+        out.source = 'cinemeta';
+        out.title = title;
+        return out;
+      }
+    } catch (e) {
+      out.error = String(e?.message || e);
+    }
+    try {
+      const { findTitleByImdbId } = require('./src/utils/tmdb');
+      const tmdbKey = process.env.TMDB_API_KEY || '6e0a84ca7b324763793422a6656d34ff';
+      const title = await findTitleByImdbId(imdbId, tmdbKey);
+      if (title) {
+        out.source = 'tmdb';
+        out.title = title;
+      }
+    } catch (e) {
+      out.error = String(e?.message || e);
+    }
+    return out;
+  };
+
   const withProbeTimeout = async (name, fn) => {
     const t0 = Date.now();
     try {
@@ -313,12 +358,16 @@ app.get('/debug/providers-stream', requireDebugAuth, async (req, res) => {
       };
     } catch (err) {
       const msg = String(err?.message || err);
+      const cls = classifyError(err);
       return {
         provider: name,
         status: msg.startsWith('timeout:') ? 'timeout' : 'error',
         count: 0,
         ms: Date.now() - t0,
         error: msg,
+        errorKind: cls.kind,
+        errorCode: cls.code || null,
+        errorStatus: cls.status,
       };
     }
   };
@@ -389,10 +438,20 @@ app.get('/debug/providers-stream', requireDebugAuth, async (req, res) => {
     timeout: results.filter(r => r.status === 'timeout').length,
     error: results.filter(r => r.status === 'error').length,
     streamTotal: results.reduce((acc, r) => acc + (r.count || 0), 0),
+    byErrorKind: results
+      .filter(r => r.status === 'error' || r.status === 'timeout')
+      .reduce((acc, r) => {
+        const k = r.errorKind || (r.status === 'timeout' ? 'timeout' : 'runtime');
+        acc[k] = (acc[k] || 0) + 1;
+        return acc;
+      }, {}),
   };
+
+  const titleResolution = await resolveTitleForDebug();
 
   res.json({
     input: { id: raw, imdbId, type, season, episode, timeoutMs },
+    titleResolution,
     summary,
     results,
   });
