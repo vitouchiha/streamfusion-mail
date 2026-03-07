@@ -648,6 +648,7 @@ document.addEventListener('DOMContentLoaded', function() {
             return btoa(encodeURIComponent(str).replace(/%([0-9A-F]{2})/g, function(a,p){
                 return String.fromCharCode(parseInt(p, 16));
               })).replace(/\\+/g,'-').replace(/\\//g,'_').replace(/=+$/,'');
+        }
         var pUrl = document.getElementById('p_url') ? document.getElementById('p_url').value.trim() : '';
         var mUrl = document.getElementById('m_url') ? document.getElementById('m_url').value.trim() : '';
         var hCat = document.getElementById('h_cat') ? document.getElementById('h_cat').checked : false;
