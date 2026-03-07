@@ -22,7 +22,6 @@ require('dotenv').config();
 
 const express  = require('express');
 const manifest = require('./manifest.json');
-const { handleCatalog, handleMeta, handleStream } = require('./src/providers/index');
 const { decodeConfig, isValidConfig, DEFAULT_CONFIG } = require('./src/utils/config');
 const { createLogger } = require('./src/utils/logger');
 
@@ -31,6 +30,18 @@ const log = createLogger('server');
 // ─── Express App ─────────────────────────────────────────────────────────────
 
 const app = express();
+
+let _providersApi = null;
+function getProvidersApi() {
+  if (_providersApi) return _providersApi;
+  try {
+    _providersApi = require('./src/providers/index');
+    return _providersApi;
+  } catch (err) {
+    log.error('providers bootstrap failed: ' + err.message);
+    return null;
+  }
+}
 
 // ─── Global 50s timeout guard (Vercel limit is 60s) ──────────────────────────
 const SERVERLESS_TIMEOUT = Number(process.env.SERVERLESS_TIMEOUT) || 50_000;
@@ -169,7 +180,9 @@ app.get([
   const config = { ...cfgFrom(req.params.config), clientIp: clientIpFrom(req) };
   const extra  = parseExtra(req.params.extra);
   try {
-    const result = await handleCatalog(req.params.type, req.params.id, extra, config);
+    const providersApi = getProvidersApi();
+    if (!providersApi?.handleCatalog) return stremioJson(res, { metas: [] });
+    const result = await providersApi.handleCatalog(req.params.type, req.params.id, extra, config);
     const age = result.metas && result.metas.length > 0 ? 300 : 0;
     stremioJson(res, result, { maxAge: age });
   } catch (err) {
@@ -185,7 +198,9 @@ app.get([
 ], async (req, res) => {
   const config = { ...cfgFrom(req.params.config), clientIp: clientIpFrom(req) };
   try {
-    const metaResult = await handleMeta(req.params.type, req.params.id, config);
+    const providersApi = getProvidersApi();
+    if (!providersApi?.handleMeta) return stremioJson(res, { meta: null });
+    const metaResult = await providersApi.handleMeta(req.params.type, req.params.id, config);
     // Don't cache null results — let Stremio retry next time
     const age = (metaResult?.meta?.videos?.length > 0) ? 1800 : 0;
     stremioJson(res, metaResult, { maxAge: age });
@@ -202,7 +217,9 @@ app.get([
 ], async (req, res) => {
   const config = { ...cfgFrom(req.params.config), clientIp: clientIpFrom(req) };
   try {
-    const result = await handleStream(req.params.type, req.params.id, config);
+    const providersApi = getProvidersApi();
+    if (!providersApi?.handleStream) return stremioJson(res, { streams: [] });
+    const result = await providersApi.handleStream(req.params.type, req.params.id, config);
     const age = result.streams && result.streams.length > 0 ? 3600 : 0;
     stremioJson(res, result, { maxAge: age });
   } catch (err) {
