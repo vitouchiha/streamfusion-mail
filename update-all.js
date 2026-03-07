@@ -1,41 +1,121 @@
-// update-all.js
-// Automates version/date update in README, landing, manifest, and pushes to GitHub
+'use strict';
 
 const fs = require('fs');
 const path = require('path');
-const { execSync } = require('child_process');
 
-const root = __dirname;
-const manifestPath = path.join(root, 'manifest.json');
-const readmePath = path.join(root, 'README.md');
-const landingPath = path.join(root, 'landing.txt');
-const changelogPath = path.join(root, 'CHANGELOG.md');
+const ROOT = __dirname;
+const DEFAULT_VERCEL_BASE_URL = 'https://streamfusion-mail.vercel.app';
 
-// 1. Get current version from manifest
-const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
-const version = manifest.version;
-const today = new Date().toISOString().slice(0, 10);
+const manifestPath = path.join(ROOT, 'manifest.json');
+const readmePath = path.join(ROOT, 'README.md');
+const changelogPath = path.join(ROOT, 'CHANGELOG.md');
+const dashboardLandingPath = path.join(ROOT, 'web', 'landing', 'index.html');
 
-// 2. Update README.md (replace version/date if present)
-let readme = fs.readFileSync(readmePath, 'utf8');
-readme = readme.replace(/(v?\d+\.\d+\.\d+)(\s*\(\d{4}-\d{2}-\d{2}\))?/, `v${version} (${today})`);
-fs.writeFileSync(readmePath, readme);
+const RELEASE_MARKERS = {
+  start: '<!-- release:meta:start -->',
+  end: '<!-- release:meta:end -->',
+};
 
-// 3. Update landing.txt (replace version if present)
-let landing = fs.readFileSync(landingPath, 'utf8');
-landing = landing.replace(/v\d+\.\d+\.\d+/, `v${version}`);
-fs.writeFileSync(landingPath, landing);
-
-// 4. Optionally, append to CHANGELOG.md if not already present
-let changelog = fs.readFileSync(changelogPath, 'utf8');
-if (!changelog.includes(`[${version}] — ${today}`)) {
-  changelog = `\n## [${version}] — ${today}\n\n### Changed\n- Aggiornamento automatico versione e landing page.\n` + changelog;
-  fs.writeFileSync(changelogPath, changelog);
+function readText(filePath) {
+  return fs.readFileSync(filePath, 'utf8');
 }
 
-// 5. Git add, commit, push
-execSync('git add .', { stdio: 'inherit' });
-execSync(`git commit -m "chore: update docs/landing for v${version} (${today})"`, { stdio: 'inherit' });
-execSync('git push', { stdio: 'inherit' });
+function writeTextIfChanged(filePath, nextValue) {
+  const currentValue = readText(filePath);
+  if (currentValue === nextValue) return false;
+  fs.writeFileSync(filePath, nextValue, 'utf8');
+  return true;
+}
 
-console.log('All docs, landing, and changelog updated and pushed!');
+function normalizeBaseUrl(value) {
+  const raw = String(value || '').trim();
+  return (raw || DEFAULT_VERCEL_BASE_URL).replace(/\/+$/, '');
+}
+
+function replaceMarkedSection(text, replacement) {
+  const { start, end } = RELEASE_MARKERS;
+  const startIndex = text.indexOf(start);
+  const endIndex = text.indexOf(end);
+  if (startIndex === -1 || endIndex === -1 || endIndex < startIndex) {
+    throw new Error(`Missing release markers: ${start} ... ${end}`);
+  }
+
+  const before = text.slice(0, startIndex);
+  const after = text.slice(endIndex + end.length);
+  return `${before}${replacement}${after}`;
+}
+
+function buildReadmeReleaseBlock({ version, date, baseUrl }) {
+  return [
+    RELEASE_MARKERS.start,
+    `- Release: \`v${version}\``,
+    `- Date: \`${date}\``,
+    `- Remote smoke target: \`${baseUrl}\``,
+    RELEASE_MARKERS.end,
+  ].join('\n');
+}
+
+function buildDashboardReleaseBlock({ version, date, baseUrl }) {
+  return [
+    RELEASE_MARKERS.start,
+    '      <div class="release-meta">',
+    `        <span class="release-pill">Release v${version}</span>`,
+    `        <span class="release-date">Aggiornato ${date}</span>`,
+    `        <a class="release-link" href="${baseUrl}/manifest.json" target="_blank" rel="noreferrer">Manifest</a>`,
+    '      </div>',
+    RELEASE_MARKERS.end,
+  ].join('\n');
+}
+
+function ensureChangelogEntry(text, { version, date }) {
+  if (text.includes(`## [${version}]`)) return text;
+
+  const entry = [
+    `## [${version}] - ${date}`,
+    '',
+    '### Changed',
+    '- Release sync automatica: README, dashboard addon e smoke test remoto Vercel allineati.',
+    '',
+    '---',
+    '',
+  ].join('\n');
+
+  const anchor = '\n---\n\n';
+  const anchorIndex = text.indexOf(anchor);
+  if (anchorIndex === -1) {
+    return `${text.trim()}\n\n---\n\n${entry}`;
+  }
+
+  const insertAt = anchorIndex + anchor.length;
+  return `${text.slice(0, insertAt)}${entry}${text.slice(insertAt)}`;
+}
+
+function main() {
+  const manifest = JSON.parse(readText(manifestPath));
+  const version = String(manifest.version || '').trim();
+  if (!version) {
+    throw new Error('manifest.json is missing "version"');
+  }
+
+  const date = new Date().toISOString().slice(0, 10);
+  const baseUrl = normalizeBaseUrl(process.env.VERCEL_BASE_URL || process.env.PUBLIC_BASE_URL);
+
+  const nextReadme = replaceMarkedSection(
+    readText(readmePath),
+    buildReadmeReleaseBlock({ version, date, baseUrl })
+  );
+  writeTextIfChanged(readmePath, nextReadme);
+
+  const nextDashboardLanding = replaceMarkedSection(
+    readText(dashboardLandingPath),
+    buildDashboardReleaseBlock({ version, date, baseUrl })
+  );
+  writeTextIfChanged(dashboardLandingPath, nextDashboardLanding);
+
+  const nextChangelog = ensureChangelogEntry(readText(changelogPath), { version, date });
+  writeTextIfChanged(changelogPath, nextChangelog);
+
+  console.log(`Release sync complete for v${version} (${date})`);
+}
+
+main();

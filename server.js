@@ -631,7 +631,7 @@ app.get('/', (req, res) => {
   app.get('/dashboard', (req, res) => {
     const fs = require('fs');
     const path = require('path');
-    const landingPath = path.join(__dirname, '../web/landing/index.html');
+    const landingPath = path.join(__dirname, 'web/landing/index.html');
     if (fs.existsSync(landingPath)) {
       res.sendFile(landingPath);
     } else {

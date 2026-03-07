@@ -10,8 +10,9 @@
     "start": "node server.js",
     "dev": "node --watch server.js",
     "lint": "eslint .",
+    "test:vercel": "node scripts/vercel-smoke.js",
     "vercel-build": "npm install",
-    "release": "node update-all.js && echo 'Release automation complete'"
+    "release": "node update-all.js && node scripts/vercel-smoke.js --wait"
   },
   "dependencies": {
     "@sparticuz/chromium": "^143.0.4",

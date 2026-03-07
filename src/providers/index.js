@@ -268,6 +268,7 @@ async function _fetchFromImdbId(rawId, type, config) {
     'easystreams',
     'streamingcommunity',
     'guardahd',
+    'guardaserie',
     'guardaserie-es',
     'guardoserie',
     'animeunity',

@@ -499,3 +499,12 @@ _Next planned improvements:_
 - [ ] Episode thumbnail caching layer
 - [ ] Rate-limiting middleware
 - [ ] GitHub Actions workflow for semver bump + GitHub Release on push
+
+---
+
+## [3.0.0] - 2026-03-07
+
+### Changed
+- Release sync automatica: README, dashboard addon e smoke test remoto Vercel allineati.
+
+---
