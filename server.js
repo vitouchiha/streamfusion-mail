@@ -464,265 +464,202 @@ function esc(s) {
   return String(s || '').replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;');
 }
 
-function buildPage(host, prefill, existingCfgStr, serverStatus) {
-  const f = prefill || {};
-  const { proxyOk = false, blOk = false, fsOk = false } = serverStatus || {};
+function buildPage(req, host) {
   const v = manifest.version;
-  const addonHost = host.replace(/^https?:\/\//, '');
+  const f = req.config || {};
+  function esc(s) { return (s || '').replace(/"/g, '&quot;'); }
+  
   return `<!DOCTYPE html>
 <html lang="it">
 <head>
-<meta charset="UTF-8"/>
-<meta name="viewport" content="width=device-width,initial-scale=1"/>
-<title>${manifest.name} v${v} — Configurazione</title>
-<style>
-*{box-sizing:border-box;margin:0;padding:0}
-:root{--accent:#7c3aed;--accent-light:#a78bfa;--bg:#0f0f13;--card:#17171e;--border:#2a2a3a;--text:#e0e0e0;--muted:#6b7280;--sub:#9ca3af}
-body{background:var(--bg);color:var(--text);font-family:'Segoe UI',system-ui,Arial,sans-serif;min-height:100vh;padding:28px 16px}
-.wrap{max-width:660px;margin:0 auto}
-h1{font-size:1.85rem;color:var(--accent-light);margin-bottom:5px;letter-spacing:-.4px}
-.vtag{background:#1e1b4b;color:var(--accent-light);border-radius:20px;padding:2px 10px;font-size:.73rem;display:inline-block;margin-bottom:16px}
-.lead{color:var(--sub);line-height:1.6;margin-bottom:26px;font-size:.9rem}
-.providers{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:22px}
-.ptag{background:#1f2937;border:1px solid #374151;border-radius:8px;padding:5px 14px;font-size:.82rem;color:var(--sub)}
-.ptag b{color:var(--accent-light)}
-.card{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:22px;margin-bottom:18px}
-.card-title{font-size:.95rem;font-weight:600;color:#c4b5fd;margin-bottom:14px;display:flex;align-items:center;gap:8px}
-.badge{background:#3b0764;color:#d8b4fe;border-radius:10px;padding:1px 8px;font-size:.7rem;font-weight:400}
-label{display:block;font-size:.81rem;color:var(--sub);margin:12px 0 4px}
-label:first-of-type{margin-top:0}
-input{width:100%;background:var(--bg);border:1px solid #374151;border-radius:7px;padding:9px 12px;color:#e5e7eb;font-size:.9rem;outline:none;transition:border .15s}
-input:focus{border-color:var(--accent)}
-input::placeholder{color:#4b5563}
-.hint{font-size:.74rem;color:var(--muted);margin-top:4px;line-height:1.5}
-.hint a,.hint code{color:var(--accent-light);text-decoration:none}
-.hint a:hover{text-decoration:underline}
-.hint code{background:#1c1c26;padding:1px 5px;border-radius:3px}
-.gen-btn{width:100%;padding:13px;background:linear-gradient(135deg,var(--accent),#5b21b6);color:#fff;border:none;border-radius:9px;font-size:.975rem;font-weight:700;cursor:pointer;margin-bottom:8px;transition:opacity .15s,transform .1s}
-.gen-btn:hover{opacity:.9}
-.gen-btn:active{transform:scale(.98)}
-.result{display:none;background:#0a0a10;border:1px solid #4c1d95;border-radius:10px;padding:16px;margin-top:16px}
-.result.show{display:block}
-.rlabel{font-size:.75rem;color:var(--accent);font-weight:700;text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px}
-.udisp{background:var(--bg);border:1px solid #312e81;border-radius:7px;padding:9px 12px;font-size:.79rem;color:var(--accent-light);word-break:break-all;font-family:monospace;line-height:1.4;margin-bottom:12px}
-.acts{display:flex;gap:8px;flex-wrap:wrap}
-.btn{display:inline-flex;align-items:center;justify-content:center;gap:5px;padding:9px 18px;border-radius:7px;font-size:.85rem;font-weight:600;cursor:pointer;border:none;text-decoration:none;transition:opacity .15s}
-.btn:hover{opacity:.85}
-.btn-cp{background:#1e1b4b;color:var(--accent-light);border:1px solid #4c1d95}
-.btn-st{background:linear-gradient(135deg,#8b5cf6,var(--accent));color:#fff}
-.btn-wb{background:#1f2937;color:#e5e7eb;border:1px solid #374151}
-.ok-msg{color:#34d399;font-size:.79rem;margin-top:8px;display:none}
-.def-link{text-align:center;margin-top:12px}
-.def-link a{color:var(--muted);font-size:.78rem;text-decoration:underline}
-.radio-group{display:flex;gap:8px;flex-wrap:wrap;margin-top:6px}
-.ropt{display:flex;align-items:center;gap:6px;background:#1a1a25;border:1px solid #2d2d42;border-radius:8px;padding:7px 14px;cursor:pointer;font-size:.84rem;color:var(--sub);transition:border-color .15s}
-.ropt:has(input:checked){border-color:var(--accent);color:var(--accent-light);background:#1e1b4b}
-.ropt input{accent-color:var(--accent);cursor:pointer}
-.chk-row{display:flex;align-items:flex-start;gap:10px;margin-top:12px;cursor:pointer}
-.chk-row input[type=checkbox]{accent-color:var(--accent);width:16px;height:16px;flex-shrink:0;margin-top:2px;cursor:pointer}
-.chk-label{font-size:.84rem;color:var(--sub);line-height:1.5}
-</style>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <title>${manifest.name} ${v}</title>
+  <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;600;800&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --primary: #ff7eb3;
+      --secondary: #00f2fe;
+      --bg: #09090b;
+      --bg-card: rgba(255, 255, 255, 0.03);
+      --glass-border: rgba(255, 255, 255, 0.1);
+      --text: #f8fafc;
+      --text-muted: #94a3b8;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      background-color: var(--bg);
+      background-image: 
+        radial-gradient(circle at 15% 50%, rgba(255, 126, 179, 0.12), transparent 25%),
+        radial-gradient(circle at 85% 30%, rgba(0, 242, 254, 0.1), transparent 25%);
+      color: var(--text);
+      font-family: 'Poppins', sans-serif;
+      min-height: 100vh;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      padding: 40px 20px;
+    }
+    .container {
+      max-width: 650px; width: 100%; background: var(--bg-card);
+      backdrop-filter: blur(20px); border: 1px solid var(--glass-border);
+      border-radius: 24px; padding: 45px 35px;
+      box-shadow: 0 30px 60px -15px rgba(0,0,0,0.6); position: relative;
+    }
+    .container::before {
+      content: ''; position: absolute; top: 0; left: 0; right: 0; height: 4px;
+      background: linear-gradient(90deg, var(--primary), var(--secondary));
+    }
+    .header { text-align: center; margin-bottom: 35px; }
+    h1 {
+      font-weight: 800; font-size: 2.8rem; margin-bottom: 10px; letter-spacing: -1px;
+      background: -webkit-linear-gradient(0deg, var(--primary), var(--secondary));
+      -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+    }
+    .badge {
+      display: inline-block; vertical-align: super;
+      background: rgba(255, 126, 179, 0.15); border: 1px solid rgba(255, 126, 179, 0.3);
+      color: var(--primary); padding: 4px 10px; border-radius: 20px; font-size: 0.8rem; font-weight: 600;
+    }
+    .lead { color: var(--text-muted); font-size: 0.95rem; line-height: 1.6; }
+    .card { background: rgba(0,0,0,0.2); border-radius: 16px; padding: 25px; margin-bottom: 20px; border: 1px solid rgba(255,255,255,0.05); }
+    .card-title { font-size: 1.1rem; font-weight: 600; margin-bottom: 12px; color: #fff; text-transform:uppercase; font-size:0.9rem; letter-spacing:1px; }
+    .input-grp { margin-bottom: 15px; }
+    label { display: block; font-size: 0.85rem; color: var(--text-muted); margin-bottom: 8px; font-weight: 500; }
+    input[type=url] {
+      width: 100%; background: #18191c; border: 1px solid #272a30; border-radius: 10px;
+      padding: 14px 16px; color: #fff; font-size: 0.95rem; font-family: 'Poppins', sans-serif;
+      transition: all 0.2s ease; outline: none;
+    }
+    input:focus { border-color: var(--primary); box-shadow: 0 0 0 3px rgba(255, 126, 179, 0.15); }
+    .hint { font-size: 0.75rem; color: #64748b; margin-top: 8px; line-height: 1.4; }
+    .checks { display: flex; flex-direction: column; gap: 12px; margin-top: 5px; }
+    .check-label {
+      display: flex; align-items: center; gap: 12px; font-size: 0.9rem; color: #cbd5e1; cursor: pointer;
+      background: #18191c; padding: 12px 16px; border-radius: 10px; border: 1px solid #272a30; transition: 0.2s;
+    }
+    .check-label:hover { border-color: #475569; }
+    .check-label input { width: 18px; height: 18px; accent-color: var(--primary); }
+    .btn-submit {
+      width: 100%; padding: 16px; margin-top: 10px;
+      background: linear-gradient(135deg, var(--primary), var(--secondary));
+      color: #000; border: none; border-radius: 12px; font-family: 'Poppins', sans-serif; font-size: 1.1rem;
+      font-weight: 700; cursor: pointer; transition: all 0.2s ease; box-shadow: 0 8px 20px rgba(255, 126, 179, 0.3);
+    }
+    .btn-submit:hover { transform: translateY(-2px); box-shadow: 0 12px 25px rgba(255, 126, 179, 0.4); }
+    .btn-submit:active { transform: translateY(1px); }
+    .result {
+      display: none; background: rgba(0,0,0,0.3); border: 1px solid var(--secondary); border-radius: 16px;
+      padding: 25px; margin-top: 25px; 
+    }
+    .result.show { display: block; animation: slideUp 0.4s cubic-bezier(0.16, 1, 0.3, 1); }
+    .url-box {
+      background: #0f1115; border: 1px solid #272a30; border-radius: 10px; padding: 14px;
+      font-family: monospace; color: #a5b4fc; font-size: 0.9rem; word-break: break-all; margin-bottom: 20px;
+    }
+    .actions { display: flex; gap: 12px; }
+    .btn-action {
+      flex: 1; padding: 14px; border-radius: 10px; text-align: center; text-decoration: none;
+      font-weight: 600; font-size: 0.95rem; cursor: pointer; border: none; font-family: 'Poppins', sans-serif;
+    }
+    .btn-stremio { background: linear-gradient(135deg, var(--secondary), #0093E9); color: #000; }
+    .btn-stremio:hover { opacity: 0.9; }
+    .btn-copy { background: #1e293b; color: #f8fafc; border: 1px solid #334155; }
+    .toast { display: none; text-align: center; color: var(--secondary); font-size: 0.85rem; margin-top: 12px; font-weight: 500; }
+    @keyframes slideUp { from { opacity: 0; transform: translateY(20px); } to { opacity: 1; transform: translateY(0); } }
+  </style>
 </head>
 <body>
-<div class="wrap">
+  <div class="container">
+    <div class="header">
+      <h1>Nello Drama <span class="badge">v${v}</span></h1>
+      <p class="lead">Il meglio dei Drama Coreani e Asiatici per Stremio.</p>
+    </div>
 
-<h1>🎬 ${manifest.name}</h1>
-<span class="vtag">v${v}</span>
-<p class="lead">${manifest.description}<br/>
-Configura il proxy per sbloccare i contenuti da Vercel.</p>
+    <form id="cfgForm">
+      <div class="card">
+        <div class="card-title">⚡ Reti e Bypass</div>
+        <div class="input-grp">
+          <label>URL Proxy MediaFlow (Opzionale)</label>
+          <input type="url" id="m_url" placeholder="https://nome-mediaflow.com" value="${esc(f.mfpUrl)}"/>
+          <div class="hint">Usato per sbloccare i flussi HLS se supportato dal server.</div>
+        </div>
+        <div class="input-grp">
+          <label>IP Bypass Proxy Personale</label>
+          <input type="url" id="p_url" placeholder="http://user:pass@host:port" value="${esc(f.proxyUrl)}"/>
+          <div class="hint">Obbligatorio per i server Vercel al fine di aggirare Cloudflare su KissKH.</div>
+        </div>
+      </div>
 
-<div class="providers">
-  <div class="ptag">🇰🇷 <b>KissKH</b> Asian Drama</div>
-  <div class="ptag">🎞 <b>Rama</b> Korean Fansub</div>
-</div>
+      <div class="card">
+        <div class="card-title">🎭 Impostazioni Catalogo</div>
+        <div class="checks">
+          <label class="check-label">
+            <input type="checkbox" id="h_cat" ${f.hideCats?'checked':''}/> 
+            Nascondi cloni delle sezioni (Mostra solo le principali Cinemeta)
+          </label>
+          <label class="check-label">
+            <input type="checkbox" id="c_mode" ${f.cinemetaMode !== false ? 'checked' : ''}/> 
+            Attiva compatibilità con IMDb/Cinemeta (Consigliato)
+          </label>
+        </div>
+      </div>
 
-<div class="card" style="border-color:${proxyOk?'#34d399':'#f87171'}">
-  <div class="card-title">⚙️ Server Status</div>
-  <div style="display:flex;gap:10px;flex-wrap:wrap;font-size:.82rem">
-    <span style="color:${proxyOk?'#34d399':'#f87171'}">${proxyOk?'✅':'❌'} HTTP Proxy ${proxyOk?'configurato':'non configurato'}</span>
-    <span style="color:${blOk?'#34d399':'#f87171'}">${blOk?'✅':'❌'} Browserless ${blOk?'configurato':'non configurato'}</span>
-    <span style="color:${fsOk?'#34d399':'#f59e0b'}">${fsOk?'✅':'⚠️'} FlareSolverr ${fsOk?'configurato':'non configurato'}</span>
+      <button type="submit" class="btn-submit">Ottieni Addon Nello Drama</button>
+    </form>
+
+    <div id="res" class="result">
+      <div style="color:var(--secondary); font-weight:600; margin-bottom:10px; text-transform:uppercase;">Tutto Pronto</div>
+      <div id="udisp" class="url-box"></div>
+      <div class="actions">
+        <button id="_actCp" class="btn-action btn-copy">Copia Link</button>
+        <a id="_actInst" class="btn-action btn-stremio" href="#">Apri in Stremio</a>
+      </div>
+      <div id="okmsg" class="toast">✨ Link magico copiato negli appunti!</div>
+    </div>
   </div>
-  ${!fsOk ? `<p style="font-size:.78rem;color:#f59e0b;margin-top:10px;line-height:1.5">
-    ⚠️ <b>KissKH streams richiedono FlareSolverr per bypassare Cloudflare.</b><br/>
-    Deploya <a href="https://github.com/FlareSolverr/FlareSolverr" target="_blank" style="color:var(--accent-light)">FlareSolverr</a>
-    su Koyeb (free tier, immagine Docker <code style="background:#1c1c26;padding:2px 6px;border-radius:3px">ghcr.io/flaresolverr/flaresolverr:latest</code>, porta 8191),
-    poi imposta su Vercel:<br/>
-    <code style="background:#1c1c26;padding:2px 6px;border-radius:3px">FLARESOLVERR_URL=https://tuo-servizio.koyeb.app</code>
-  </p>` : ''}
-</div>
 
-<div class="card">
-  <div class="card-title">📡 MediaFlow Proxy <span class="badge">Per i flussi video</span></div>
-  <p style="font-size:.82rem;color:var(--muted);margin-bottom:14px">
-    Bypassa blocchi IP sullo streaming. Self-hosted su
-    <a href="https://github.com/mhdzumair/mediaflow-proxy" target="_blank" style="color:var(--accent-light)">mediaflow-proxy</a>.
-    I flussi HLS/DASH vengono rerouted attraverso il tuo server MFP.
-  </p>
-  <label for="mfpUrl">URL del tuo MediaFlow Proxy</label>
-  <input id="mfpUrl" type="url" placeholder="https://mfp.tuodominio.com" value="${esc(f.mfpUrl)}"/>
-  <div class="hint">L'URL dove hai deployato MediaFlow Proxy. Lascia vuoto se non lo usi.</div>
-
-  <label for="mfpKey">API Key <span style="font-weight:400;color:var(--muted)">(opzionale)</span></label>
-  <input id="mfpKey" type="password" placeholder="API_PASSWORD di MFP" value="${esc(f.mfpKey)}"/>
-  <div class="hint">Corrisponde alla variabile <code>API_PASSWORD</code> nella configurazione di MFP.</div>
-</div>
-
-<div class="card">
-  <div class="card-title">🔒 HTTP Proxy <span class="badge">Per catalog e metadata</span></div>
-  <p style="font-size:.82rem;color:var(--muted);margin-bottom:14px">
-    Vercel ha IP datacenter bloccati da Cloudflare. Un proxy con IP residenziale italiano
-    permette di caricare i cataloghi e le schede dei drama.
-  </p>
-  <label for="proxyUrl">HTTP / SOCKS5 Proxy URL</label>
-  <input id="proxyUrl" type="text" placeholder="http://user:pass@host:port" autocomplete="off" spellcheck="false" value="${esc(f.proxyUrl)}"/>
-  <div class="hint">
-    Formati: <code>http://user:pass@host:port</code> · <code>socks5://user:pass@host:port</code><br/>
-    Piano free residenziale: <a href="https://proxy.webshare.io" target="_blank">WebShare.io</a>
-    — scegli exit node Italia per sottotitoli italiani su KissKH.
-  </div>
-</div>
-
-<div class="card">
-  <div class="card-title">🎥 TMDB <span class="badge">Metadata arricchito</span></div>
-  <p style="font-size:.82rem;color:var(--muted);margin-bottom:14px">
-    Arricchisce poster, background, cast, generi e valutazione dei drama di KissKH e Rama
-    usando The Movie Database. Gratuito &mdash;
-    <a href="https://www.themoviedb.org/settings/api" target="_blank" style="color:var(--accent-light)">genera la tua API key</a>.
-  </p>
-  <label for="tmdbKey">TMDB API Key (v3 auth)</label>
-  <input id="tmdbKey" type="password" placeholder="Pre-configurata — puoi usare la tua chiave personale" autocomplete="off" spellcheck="false" value="${esc(f.tmdbKey)}"/>
-  <div class="hint">TMDB è consigliato per metadati piu ricchi, ma non obbligatorio: per il match Cinemeta (tt*) esiste un fallback automatico via IMDb. Se vuoi usare il tuo account TMDB, inserisci la tua chiave personale (<a href="https://www.themoviedb.org/settings/api" target="_blank">genera qui</a>).</div>
-</div>
-
-<div class="card">
-  <div class="card-title">⭐ RPDB <span class="badge">Poster con rating</span></div>
-  <p style="font-size:.82rem;color:var(--muted);margin-bottom:14px">
-    Sostituisce i poster standard con versioni che mostrano il rating IMDb in sovrimpressione.
-    Richiede TMDB attivo (per ricavare l&rsquo;IMDB ID). <a href="https://ratingposterdb.com" target="_blank" style="color:var(--accent-light)">ratingposterdb.com</a>
-  </p>
-  <label for="rpdbKey">RPDB API Key</label>
-  <input id="rpdbKey" type="password" placeholder="Incolla qui la tua RPDB API key" autocomplete="off" spellcheck="false" value="${esc(f.rpdbKey)}"/>
-  <div class="hint">Funziona solo se TMDB è configurato. Lascia vuoto per disattivare.</div>
-</div>
-
-<div class="card">
-  <div class="card-title">🎬 TopPoster <span class="badge">Poster personalizzati</span></div>
-  <p style="font-size:.82rem;color:var(--muted);margin-bottom:14px">
-    Sostituisce i poster standard con locandine personalizzate ad alta qualità.
-    Richiede TMDB attivo (per ricavare l&rsquo;IMDB ID). <a href="https://api.top-streaming.stream/user/dashboard" target="_blank" style="color:var(--accent-light)">top-streaming.stream</a>
-  </p>
-  <label for="tpKey">TopPoster API Key</label>
-  <input id="tpKey" type="password" placeholder="Incolla qui la tua TopPoster API key" autocomplete="off" spellcheck="false" value="${esc(f.topPosterKey)}"/>
-  <div class="hint">Ha priorità su RPDB. Funziona solo se TMDB è configurato. Lascia vuoto per disattivare.</div>
-</div>
-
-<div class="card">
-
-  <label style="margin-top:0">Provider attivi</label>
-  <div class="radio-group" id="providerGroup">
-    <label class="ropt"><input type="radio" name="pv" value="all" ${(!f.providers || f.providers === 'all') ? 'checked' : ''}/> 🌐 Entrambi</label>
-    <label class="ropt"><input type="radio" name="pv" value="kisskh" ${f.providers === 'kisskh' ? 'checked' : ''}/> <b>KissKH</b></label>
-    <label class="ropt"><input type="radio" name="pv" value="rama" ${f.providers === 'rama' ? 'checked' : ''}/> <b>Rama</b></label>
-  </div>
-  <div class="hint">Scegli da quale sorgente vuoi i flussi streaming.</div>
-
-  <label class="chk-row" for="hideCatalogs">
-    <input type="checkbox" id="hideCatalogs" ${f.hideCatalogs ? 'checked' : ''}/>
-    <span class="chk-label"><b>Nascondi cataloghi dalla home di Stremio</b><br/>
-      Rimuove le sezioni "Asian Drama" e "Korean Drama" dalla schermata principale.
-      Utile se usi Cinemeta come catalogo principale.</span>
-  </label>
-
-  <label class="chk-row" for="cinemetaChk">
-    <input type="checkbox" id="cinemetaChk" ${f.cinemeta ? 'checked' : ''}/>
-    <span class="chk-label"><b>Abilita stream da Cinemeta / IMDB</b><br/>
-      Il nostro addon risponderà anche ai titoli trovati tramite Cinemeta.
-      Cerca il drama su Cinemeta → i flussi arriveranno da KissKH/Rama automaticamente.</span>
-  </label>
-</div>
-
-<button class="gen-btn" onclick="generate()">✨ Genera URL personalizzato</button>
-
-<div class="result" id="result">
-  <div class="rlabel">📋 Il tuo URL di installazione</div>
-  <div class="udisp" id="udisp"></div>
-  <div class="acts" id="acts"></div>
-  <div class="ok-msg" id="okMsg">✅ Copiato!</div>
-</div>
-
-<div class="def-link">
-  <a href="stremio://${addonHost}/manifest.json">
-    Installa senza configurazione (solo per uso locale/VPS)
-  </a>
-</div>
-
-</div>
 <script>
 (function(){
-  function b64url(s){
-    return btoa(unescape(encodeURIComponent(s)))
-      .replace(/\\+/g,'-').replace(/\\//g,'_').replace(/=+$/,'');
+  function b64e(str) {
+    return btoa(encodeURIComponent(str).replace(/%([0-9A-F]{2})/g, function(a,p){
+      return String.fromCharCode(parseInt(p, 16));
+    })).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');
   }
-  function encCfg(c){
-    var o={};
-    if(c.mfpUrl)        o.mfp=c.mfpUrl;
-    if(c.mfpKey)        o.mfpk=c.mfpKey;
-    if(c.proxyUrl)      o.px=c.proxyUrl;
-    if(c.hideCatalogs)  o.hc=1;
-    var pvMap={kisskh:'k',rama:'r'};
-    if(c.providers && c.providers!=='all') o.pv=pvMap[c.providers]||c.providers;
-    if(c.cinemeta)      o.cm=1;
-    if(c.tmdbKey)       o.tm=c.tmdbKey;
-    if(c.rpdbKey)       o.rp=c.rpdbKey;
-    if(c.topPosterKey)  o.tp=c.topPosterKey;
-    return b64url(JSON.stringify(o));
-  }
-  window.generate=function(){
-    var pvEl=document.querySelector('input[name="pv"]:checked');
-    var cfg={
-      mfpUrl: document.getElementById('mfpUrl').value.trim(),
-      mfpKey: document.getElementById('mfpKey').value.trim(),
-      proxyUrl: document.getElementById('proxyUrl').value.trim(),
-      hideCatalogs: document.getElementById('hideCatalogs').checked,
-      providers: pvEl ? pvEl.value : 'all',
-      cinemeta: document.getElementById('cinemetaChk').checked,
-      tmdbKey: document.getElementById('tmdbKey').value.trim(),
-      rpdbKey: document.getElementById('rpdbKey').value.trim(),
-      topPosterKey: document.getElementById('tpKey').value.trim()
+  var frm = document.getElementById('cfgForm');
+  frm.onsubmit = function(e) {
+    e.preventDefault();
+    var c = {
+      proxyUrl: document.getElementById('p_url').value.trim(),
+      mfpUrl: document.getElementById('m_url').value.trim(),
+      providers: ['kisskh', 'rama'],
+      hideCats: document.getElementById('h_cat').checked,
+      cinemetaMode: document.getElementById('c_mode').checked,
+      tmdbKey: '04a60155a01ff61453266bd9a367448e'
     };
-    if(!cfg.mfpUrl&&!cfg.proxyUrl&&!cfg.hideCatalogs&&cfg.providers==='all'&&!cfg.cinemeta&&!cfg.tmdbKey&&!cfg.rpdbKey&&!cfg.topPosterKey){
-      alert('Configura almeno una opzione (Proxy, Provider, o Nascondi cataloghi).');
-      return;
-    }
-    var enc=encCfg(cfg);
-    var base=location.origin;
-    var url=base+'/'+enc+'/manifest.json';
-    var stremio='stremio://${addonHost}/'+enc+'/manifest.json';
-    document.getElementById('udisp').textContent=url;
-    document.getElementById('acts').innerHTML=
-      '<button id="_actCp" class="btn btn-cp">📋 Copia URL</button>'
-      +'<a class="btn btn-st" href="'+stremio+'">▶ Installa su Stremio</a>'
-      +'<a class="btn btn-wb" href="https://web.stremio.com/#/addons?addon='
-        +encodeURIComponent(url)+'" target="_blank">🌐 Web</a>';
-    document.getElementById('_actCp').onclick=function(){ cp(url); };
-    var r=document.getElementById('result');
-    r.classList.add('show');
-    r.scrollIntoView({behavior:'smooth',block:'nearest'});
+    var enc = b64e(JSON.stringify(c));
+    var base = window.location.origin;
+    var finalUrl = enc ? base + '/' + enc + '/manifest.json' : base + '/manifest.json';
+    var stremioUrl = finalUrl.replace(/^https?:/, 'stremio:');
+    
+    document.getElementById('res').classList.add('show');
+    document.getElementById('udisp').textContent = finalUrl;
+    document.getElementById('_actInst').href = stremioUrl;
+    
+    document.getElementById('_actCp').onclick = function(){
+      navigator.clipboard.writeText(finalUrl).then(function(){
+        var msg = document.getElementById('okmsg');
+        msg.style.display = 'block';
+        setTimeout(function(){ msg.style.display='none'; }, 3000);
+      });
+    };
   };
-  window.cp=function(url){
-    navigator.clipboard.writeText(url).then(function(){
-      var m=document.getElementById('okMsg');
-      m.style.display='block';
-      setTimeout(function(){m.style.display='none';},2000);
-    });
-  };
-  ${existingCfgStr ? "document.addEventListener('DOMContentLoaded',function(){generate();});" : ''}
 })();
 </script>
 </body>
 </html>`;
 }
+
 
 // ─── Startup ──────────────────────────────────────────────────────────────────
 

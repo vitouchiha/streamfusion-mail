@@ -1,15 +1,15 @@
 {
-  "id": "org.streamfusion.mail",
-  "version": "2.0.0",
-  "name": "StreamFusion Asian Drama",
-  "description": "Aggregatore flussi streaming multi-provider per Stremio — Korean Drama & Asian Drama con sub ITA (KissKH, Rama)",
+  "id": "org.nello.drama",
+  "version": "3.0.0",
+  "name": "Nello Drama",
+  "description": "Il motore di aggregazione definitivo per i Drama in streaming su Stremio con sub ITA. Ottimizzato per Vercel.",
   "logo": "https://i.imgur.com/i7VdVv7.png",
   "background": "https://i.imgur.com/mtsxMk7.jpeg",
   "catalogs": [
     {
       "type": "series",
       "id": "kisskh_catalog",
-      "name": "Asian Drama (KissKH)",
+      "name": "Nello: Asian Drama",
       "extra": [
         {
           "name": "search",
@@ -24,7 +24,7 @@
     {
       "type": "series",
       "id": "rama_catalog",
-      "name": "Korean Drama (Rama)",
+      "name": "Nello: Korean Drama",
       "extra": [
         {
           "name": "search",
