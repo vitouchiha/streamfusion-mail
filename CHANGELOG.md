@@ -502,6 +502,12 @@ _Next planned improvements:_
 
 ---
 
+## [3.0.1] - 2026-03-07
+
+### Changed
+- Release sync automatica: README, dashboard addon e smoke test remoto Vercel allineati.
+
+---
 ## [3.0.0] - 2026-03-07
 
 ### Changed

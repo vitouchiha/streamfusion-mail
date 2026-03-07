@@ -1,7 +1,7 @@
 # StreamFusion Mail
 
 <!-- release:meta:start -->
-- Release: `v3.0.0`
+- Release: `v3.0.1`
 - Date: `2026-03-07`
 - Remote smoke target: `https://streamfusion-mail.vercel.app`
 <!-- release:meta:end -->

@@ -1,6 +1,6 @@
 {
   "id": "org.nello.drama",
-  "version": "3.0.0",
+  "version": "3.0.1",
   "name": "Nello Drama",
   "description": "Il motore di aggregazione definitivo per i Drama in streaming su Stremio con sub ITA. Ottimizzato per Vercel.",
   "logo": "https://i.imgur.com/i7VdVv7.png",
