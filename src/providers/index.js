@@ -40,6 +40,24 @@ const STREAM_TIMEOUT   = Number(process.env.STREAM_TIMEOUT)   || 30_000;
 const CINEMETA_TIMEOUT = 5_000;
 const IMDB_PROVIDER_TIMEOUT = Number(process.env.IMDB_PROVIDER_TIMEOUT) || 15_000;
 const ENABLE_LEGACY_ENGINE = String(process.env.ENABLE_LEGACY_ENGINE || '').trim() === '1';
+const IMDB_EPISODE_CACHE_TTL = Number(process.env.IMDB_EPISODE_CACHE_TTL) || 6 * 60 * 60_000;
+const IMDB_NO_MATCH_CACHE_TTL = Number(process.env.IMDB_NO_MATCH_CACHE_TTL) || 15 * 60_000;
+
+const _imdbEpisodeCache = new Map();
+
+function _cacheGet(map, key) {
+  const entry = map.get(key);
+  if (!entry) return undefined;
+  if (entry.exp <= Date.now()) {
+    map.delete(key);
+    return undefined;
+  }
+  return entry.value;
+}
+
+function _cacheSet(map, key, value, ttl) {
+  map.set(key, { value, exp: Date.now() + ttl });
+}
 
 function _isProviderEnabled(config, providerName) {
   const p = config?.providers;
@@ -282,15 +300,57 @@ async function _fetchFromImdbId(rawId, type, config) {
 
   const jobs = [];
   const imdbJobTimeout = Math.max(1_000, Number(config?.imdbJobTimeout) || IMDB_PROVIDER_TIMEOUT);
-  const runImdbJob = (label, fn) => withTimeout(Promise.resolve().then(fn), imdbJobTimeout, label).catch(e => {
+  const runImdbJob = (label, fn, timeoutMs = imdbJobTimeout) => withTimeout(Promise.resolve().then(fn), timeoutMs, label).catch(e => {
     log.warn(`${label} failed: ${e.message}`);
     return [];
   });
 
-  if (useKisskh) jobs.push(runImdbJob('kisskh.imdb', () => _tryTitleCandidates(titleCandidates, t => _kisskhStreamsForTitle(t, seasonNum, episodeNum, config))));
-  if (useRama) jobs.push(runImdbJob('rama.imdb', () => _tryTitleCandidates(titleCandidates, t => _ramaStreamsForTitle(t, episodeNum, config))));
-  if (useDrammatica) jobs.push(runImdbJob('drammatica.imdb', () => _tryTitleCandidates(titleCandidates, t => _drammaticaStreamsForTitle(t, episodeNum, config))));
-  if (useGuardaserie) jobs.push(runImdbJob('guardaserie.imdb', () => _tryTitleCandidates(titleCandidates, t => _guardaserieStreamsForTitle(t, episodeNum, config))));
+  const providerTimeout = (name) => {
+    if (name === 'kisskh.imdb') return Math.max(imdbJobTimeout, 20_000);
+    if (name === 'guardaserie.imdb') return Math.max(imdbJobTimeout, 18_000);
+    return imdbJobTimeout;
+  };
+
+  if (useKisskh) {
+    jobs.push(runImdbJob('kisskh.imdb', () => _legacyProviderStreamsForImdb({
+      provider: 'kisskh', imdbId, titleCandidates, seasonNum, episodeNum, config,
+      searchTimeout: 20_000,
+      catalogFn: kisskh.getCatalog,
+      metaFn: kisskh.getMeta,
+      streamsFn: kisskh.getStreams,
+      forceSeasonOne: false,
+    }), providerTimeout('kisskh.imdb')));
+  }
+  if (useRama) {
+    jobs.push(runImdbJob('rama.imdb', () => _legacyProviderStreamsForImdb({
+      provider: 'rama', imdbId, titleCandidates, seasonNum, episodeNum, config,
+      searchTimeout: 8_000,
+      catalogFn: rama.getCatalog,
+      metaFn: rama.getMeta,
+      streamsFn: rama.getStreams,
+      forceSeasonOne: true,
+    }), providerTimeout('rama.imdb')));
+  }
+  if (useDrammatica) {
+    jobs.push(runImdbJob('drammatica.imdb', () => _legacyProviderStreamsForImdb({
+      provider: 'drammatica', imdbId, titleCandidates, seasonNum, episodeNum, config,
+      searchTimeout: 10_000,
+      catalogFn: drammatica.getCatalog,
+      metaFn: drammatica.getMeta,
+      streamsFn: drammatica.getStreams,
+      forceSeasonOne: true,
+    }), providerTimeout('drammatica.imdb')));
+  }
+  if (useGuardaserie) {
+    jobs.push(runImdbJob('guardaserie.imdb', () => _legacyProviderStreamsForImdb({
+      provider: 'guardaserie', imdbId, titleCandidates, seasonNum, episodeNum, config,
+      searchTimeout: 12_000,
+      catalogFn: guardaserie.getCatalog,
+      metaFn: guardaserie.getMeta,
+      streamsFn: guardaserie.getStreams,
+      forceSeasonOne: true,
+    }), providerTimeout('guardaserie.imdb')));
+  }
   
   // Lookup integrale tramite orchestratore easystreams originale.
   if (useEasystreams) {
@@ -323,6 +383,85 @@ async function _tryTitleCandidates(candidates, runForTitle) {
     const streams = await Promise.resolve().then(() => runForTitle(t)).catch(() => []);
     if (Array.isArray(streams) && streams.length > 0) return streams;
   }
+  return [];
+}
+
+async function _legacyProviderStreamsForImdb(opts) {
+  const {
+    provider,
+    imdbId,
+    titleCandidates,
+    seasonNum,
+    episodeNum,
+    config,
+    searchTimeout,
+    catalogFn,
+    metaFn,
+    streamsFn,
+    forceSeasonOne,
+  } = opts;
+
+  const normalizedSeason = Number.isInteger(seasonNum) && seasonNum > 0 ? seasonNum : 1;
+  const normalizedEpisode = Number.isInteger(episodeNum) && episodeNum > 0 ? episodeNum : 1;
+  const seasonForMatch = forceSeasonOne ? 1 : normalizedSeason;
+  const cacheKey = `${provider}:${imdbId}:${seasonForMatch}:${normalizedEpisode}`;
+
+  const cachedEpisodeId = _cacheGet(_imdbEpisodeCache, cacheKey);
+  if (cachedEpisodeId === '__NO_MATCH__') return [];
+
+  if (cachedEpisodeId) {
+    const cachedStreams = await withTimeout(
+      streamsFn(cachedEpisodeId, config),
+      STREAM_TIMEOUT,
+      `${provider}.getStreams.cached`
+    ).catch(() => []);
+
+    if (Array.isArray(cachedStreams) && cachedStreams.length > 0) {
+      return cachedStreams;
+    }
+  }
+
+  const candidateList = Array.isArray(titleCandidates) && titleCandidates.length
+    ? titleCandidates
+    : [];
+
+  for (const title of candidateList) {
+    const metas = await withTimeout(
+      catalogFn(0, title, config),
+      searchTimeout,
+      `${provider}.search`
+    ).catch(() => []);
+    if (!Array.isArray(metas) || metas.length === 0) continue;
+
+    const best = _bestMatch(metas, title);
+    if (!best?.id) continue;
+
+    const { meta } = await withTimeout(
+      metaFn(best.id, config),
+      META_TIMEOUT,
+      `${provider}.getMeta`
+    ).catch(() => ({ meta: null }));
+
+    const videos = Array.isArray(meta?.videos) ? meta.videos : [];
+    if (!videos.length) continue;
+
+    const ep = _matchEpisode(videos, seasonForMatch, normalizedEpisode);
+    if (!ep?.id) continue;
+
+    _cacheSet(_imdbEpisodeCache, cacheKey, ep.id, IMDB_EPISODE_CACHE_TTL);
+
+    const streams = await withTimeout(
+      streamsFn(ep.id, config),
+      STREAM_TIMEOUT,
+      `${provider}.getStreams`
+    ).catch(() => []);
+
+    if (Array.isArray(streams) && streams.length > 0) {
+      return streams;
+    }
+  }
+
+  _cacheSet(_imdbEpisodeCache, cacheKey, '__NO_MATCH__', IMDB_NO_MATCH_CACHE_TTL);
   return [];
 }
 
