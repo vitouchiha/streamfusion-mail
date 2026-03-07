@@ -257,6 +257,8 @@ async function _fetchFromImdbId(rawId, type, config) {
     return [];
   }
   log.info(`title resolved: "${title}"`, { imdbId });
+  const titleCandidates = await _buildTitleCandidates(imdbId, type, config, title);
+  log.info('title candidates', { imdbId, count: titleCandidates.length, titles: titleCandidates.slice(0, 5) });
 
   // 2. Search providers for the title, respecting `config.providers`
   const useKisskh = _isProviderEnabled(config, 'kisskh');
@@ -285,10 +287,10 @@ async function _fetchFromImdbId(rawId, type, config) {
     return [];
   });
 
-  if (useKisskh) jobs.push(runImdbJob('kisskh.imdb', () => _kisskhStreamsForTitle(title, seasonNum, episodeNum, config)));
-  if (useRama) jobs.push(runImdbJob('rama.imdb', () => _ramaStreamsForTitle(title, episodeNum, config)));
-  if (useDrammatica) jobs.push(runImdbJob('drammatica.imdb', () => _drammaticaStreamsForTitle(title, episodeNum, config)));
-  if (useGuardaserie) jobs.push(runImdbJob('guardaserie.imdb', () => _guardaserieStreamsForTitle(title, episodeNum, config)));
+  if (useKisskh) jobs.push(runImdbJob('kisskh.imdb', () => _tryTitleCandidates(titleCandidates, t => _kisskhStreamsForTitle(t, seasonNum, episodeNum, config))));
+  if (useRama) jobs.push(runImdbJob('rama.imdb', () => _tryTitleCandidates(titleCandidates, t => _ramaStreamsForTitle(t, episodeNum, config))));
+  if (useDrammatica) jobs.push(runImdbJob('drammatica.imdb', () => _tryTitleCandidates(titleCandidates, t => _drammaticaStreamsForTitle(t, episodeNum, config))));
+  if (useGuardaserie) jobs.push(runImdbJob('guardaserie.imdb', () => _tryTitleCandidates(titleCandidates, t => _guardaserieStreamsForTitle(t, episodeNum, config))));
   
   // Lookup integrale tramite orchestratore easystreams originale.
   if (useEasystreams) {
@@ -313,6 +315,54 @@ async function _fetchFromImdbId(rawId, type, config) {
 
   const results = await Promise.all(jobs);
   return results.flat();
+}
+
+async function _tryTitleCandidates(candidates, runForTitle) {
+  const list = Array.isArray(candidates) && candidates.length ? candidates : [];
+  for (const t of list) {
+    const streams = await Promise.resolve().then(() => runForTitle(t)).catch(() => []);
+    if (Array.isArray(streams) && streams.length > 0) return streams;
+  }
+  return [];
+}
+
+async function _buildTitleCandidates(imdbId, type, config, primaryTitle) {
+  const set = new Set();
+  const add = (v) => {
+    const s = String(v || '').trim();
+    if (!s) return;
+    set.add(s);
+  };
+
+  add(primaryTitle);
+
+  const tmdbKey = config.tmdbKey || process.env.TMDB_API_KEY || '';
+  if (tmdbKey && imdbId) {
+    try {
+      const findUrl = `https://api.themoviedb.org/3/find/${encodeURIComponent(imdbId)}?api_key=${tmdbKey}&external_source=imdb_id&language=it-IT`;
+      const findResp = await axios.get(findUrl, { timeout: 5000 });
+      const isMovie = type === 'movie';
+      const hit = isMovie
+        ? findResp?.data?.movie_results?.[0]
+        : findResp?.data?.tv_results?.[0] || findResp?.data?.movie_results?.[0];
+
+      const tmdbId = hit?.id;
+      if (tmdbId) {
+        const endpoint = isMovie ? 'movie' : 'tv';
+        const detailUrl = `https://api.themoviedb.org/3/${endpoint}/${tmdbId}?api_key=${tmdbKey}&language=it-IT`;
+        const d = await axios.get(detailUrl, { timeout: 5000 });
+        const item = d?.data || {};
+        add(item.name);
+        add(item.original_name);
+        add(item.title);
+        add(item.original_title);
+      }
+    } catch (_) {
+      // Best effort only
+    }
+  }
+
+  return Array.from(set);
 }
 
 /**
