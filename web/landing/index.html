@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Streaming Koreano - Proxy Landing</title>
+    <style>
+        body { font-family: monospace; background: #121212; color: #fff; padding: 2rem; }
+        .card { background: #1e1e1e; padding: 1.5rem; border-radius: 8px; margin-top: 1rem; }
+        .stats { display: flex; gap: 1rem; }
+        .stat-box { background: #2c2c2c; padding: 1rem; border-radius: 5px; flex: 1; text-align: center; }
+    </style>
+</head>
+<body>
+    <h1>Streaming Koreano Tracker</h1>
+    <div class="card">
+        <h2>Providers Attivi</h2>
+        <ul id="providers-list">Caricamento...</ul>
+    </div>
+    
+    <div class="card">
+        <h2>Statistiche Cataloghi</h2>
+        <div class="stats">
+            <div class="stat-box"><h3>Film</h3><p id="stat-movies">...</p></div>
+            <div class="stat-box"><h3>Serie</h3><p id="stat-series">...</p></div>
+        </div>
+    </div>
+
+    <script>
+        // Fetch dinamico /api/status
+        fetch('/api/status')
+            .then(res => res.json())
+            .then(data => {
+                document.getElementById('providers-list').innerHTML = data.providers.map(p => `<li>✅ ${p}</li>`).join('');
+                document.getElementById('stat-movies').innerText = data.stats.movies;
+                document.getElementById('stat-series').innerText = data.stats.series;
+            })
+            .catch(err => {
+                console.error("Errore fetch status", err);
+                document.getElementById('providers-list').innerHTML = "<li>Errore caricamento</li>";
+            });
+    </script>
+</body>
+</html>

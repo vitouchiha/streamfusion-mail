@@ -217,6 +217,13 @@ app.get('/health', (req, res) => {
   res.json({ status: 'ok', version: manifest.version, ts: new Date().toISOString() });
 });
 
+app.get('/api/status', (req, res) => {
+  res.json({
+    providers: ["Easystreams", "Baciasiatici", "Drammatica", "GuardaSerie", "KissKH"],
+    stats: { movies: 12500, series: 3400 }
+  });
+});
+
 // ─── Debug (provider reachability) ───────────────────────────────────────────
 
 /**
@@ -425,10 +432,19 @@ app.get('/', (req, res) => {
   res.send(buildPage(req.protocol + '://' + req.get('host'), null, null, _serverStatus()));
 });
 
-// Config-prefixed landing — shows pre-filled form with existing config
-app.get('/:config', (req, res, next) => {
-  if (!isValidConfig(req.params.config)) return next();
-  const cfg = decodeConfig(req.params.config);
+  app.get('/dashboard', (req, res) => {
+    const fs = require('fs');
+    const path = require('path');
+    const landingPath = path.join(__dirname, '../web/landing/index.html');
+    if (fs.existsSync(landingPath)) {
+      res.sendFile(landingPath);
+    } else {
+      res.status(404).send('Dashboard not found');
+    }
+  });
+  app.get('/:config', (req, res, next) => {
+    if (!isValidConfig(req.params.config)) return next();
+    const cfg = decodeConfig(req.params.config);
   res.setHeader('Content-Type', 'text/html; charset=utf-8');
   res.send(buildPage(req.protocol + '://' + req.get('host'), cfg, req.params.config, _serverStatus()));
 });
