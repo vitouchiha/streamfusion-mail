@@ -20,8 +20,7 @@
 const axios           = require('axios');
 const kisskh          = require('./kisskh');
 const rama            = require('./rama');
-const drammatica      = require('./drammatica');
-const guardaserie     = require('./guardaserie');
+// Drammatica and legacy Guardaserie removed
 
 // Orchestratore completo easystreams (include tutti i provider originali)
 const easystreams = require('../index');
@@ -116,15 +115,7 @@ async function handleCatalog(type, catalogId, extra = {}, config = {}) {
       return { metas };
     }
 
-    if (catalogId === 'drammatica_catalog') {
-      const metas = await withTimeout(drammatica.getCatalog(skip, search, config), CATALOG_TIMEOUT, 'drammatica.getCatalog');
-      return { metas };
-    }
-
-    if (catalogId === 'guardaserie_catalog') {
-      const metas = await withTimeout(guardaserie.getCatalog(skip, search, config), CATALOG_TIMEOUT, 'guardaserie.getCatalog');
-      return { metas };
-    }
+    // Only Rama and KissKH catalogs remain
 
   } catch (err) {
     log.error(`catalog failed: ${err.message}`, { type, catalogId });
@@ -163,21 +154,7 @@ async function handleMeta(type, id, config = {}) {
       return result;
     }
 
-    if (id.startsWith('drammatica_')) {
-      result = await withTimeout(drammatica.getMeta(id, config), META_TIMEOUT, 'drammatica.getMeta');
-      if (!result?.meta) result = { meta: _fallbackMetaForId(id, 'series') };
-      const videos = Array.isArray(result?.meta?.videos) ? result.meta.videos.length : 0;
-      log.info('meta response', { id, provider: 'drammatica', hasMeta: !!result?.meta, videos });
-      return result;
-    }
-
-    if (id.startsWith('guardaserie_')) {
-      result = await withTimeout(guardaserie.getMeta(id, config), META_TIMEOUT, 'guardaserie.getMeta');
-      if (!result?.meta) result = { meta: _fallbackMetaForId(id, 'series') };
-      const videos = Array.isArray(result?.meta?.videos) ? result.meta.videos.length : 0;
-      log.info('meta response', { id, provider: 'guardaserie', hasMeta: !!result?.meta, videos });
-      return result;
-    }
+    // Drammatica and legacy Guardaserie meta removed
 
   } catch (err) {
     log.error(`meta failed: ${err.message}`, { type, id });
@@ -282,8 +259,7 @@ async function _fetchFromImdbId(rawId, type, config) {
   // 2. Search providers for the title, respecting `config.providers`
   const useKisskh = _isProviderEnabled(config, 'kisskh');
   const useRama = _isProviderEnabled(config, 'rama');
-  const useDrammatica = _isProviderEnabled(config, 'drammatica');
-  const useGuardaserie = _isProviderEnabled(config, 'guardaserie');
+  // Drammatica and legacy Guardaserie removed
   
   // Provider easystreams completi (guardahd, guardaserie, guardoserie,
   // animeunity, animeworld, animesaturn, streamingcommunity)
@@ -332,27 +308,7 @@ async function _fetchFromImdbId(rawId, type, config) {
       forceSeasonOne: true,
     }), providerTimeout('rama.imdb')));
   }
-  if (useDrammatica) {
-    jobs.push(runImdbJob('drammatica.imdb', () => _legacyProviderStreamsForImdb({
-      provider: 'drammatica', imdbId, titleCandidates, seasonNum, episodeNum, config,
-      searchTimeout: 10_000,
-      catalogFn: drammatica.getCatalog,
-      metaFn: drammatica.getMeta,
-      streamsFn: drammatica.getStreams,
-      forceSeasonOne: true,
-    }), providerTimeout('drammatica.imdb')));
-  }
-  const useGuardaserieLegacyImdb = useGuardaserie && (config?.enableLegacyGuardaserieImdb === true || ENABLE_GUARDASERIE_LEGACY_IMDB);
-  if (useGuardaserieLegacyImdb) {
-    jobs.push(runImdbJob('guardaserie.imdb', () => _legacyProviderStreamsForImdb({
-      provider: 'guardaserie', imdbId, titleCandidates, seasonNum, episodeNum, config,
-      searchTimeout: 12_000,
-      catalogFn: guardaserie.getCatalog,
-      metaFn: guardaserie.getMeta,
-      streamsFn: guardaserie.getStreams,
-      forceSeasonOne: true,
-    }), providerTimeout('guardaserie.imdb')));
-  }
+  // Only Rama and KissKH legacy IMDB jobs remain
   
   // Lookup integrale tramite orchestratore easystreams originale.
   if (useEasystreams) {

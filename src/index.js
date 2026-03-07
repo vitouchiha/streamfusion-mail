@@ -1,5 +1,5 @@
 const guardahd = require('./guardahd/index');
-const guardaserie = require('./guardaserie/index');
+// Guardaserie legacy and Drammatica removed
 const guardoserie = require('./guardoserie/index');
 const streamingcommunity = require('./streamingcommunity/index');
 const animeunity = require('./animeunity/index');

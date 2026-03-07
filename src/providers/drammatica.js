@@ -13,7 +13,7 @@
  *   - getStreams(id)             → [{name, description, url, behaviorHints}]
  */
 
-const cheerio = require('cheerio');
+// Removed: Drammatica provider is no longer used.
 const { fetchWithCloudscraper } = require('../utils/fetcher');
 const { TTLCache } = require('../utils/cache');
 const { wrapStreamUrl } = require('../utils/mediaflow');
