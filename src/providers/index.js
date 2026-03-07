@@ -38,7 +38,7 @@ const CATALOG_TIMEOUT  = Number(process.env.CATALOG_TIMEOUT)  || 12_000;
 const META_TIMEOUT     = Number(process.env.META_TIMEOUT)     || 12_000;
 const STREAM_TIMEOUT   = Number(process.env.STREAM_TIMEOUT)   || 30_000;
 const CINEMETA_TIMEOUT = 5_000;
-const IMDB_PROVIDER_TIMEOUT = Number(process.env.IMDB_PROVIDER_TIMEOUT) || 9_000;
+const IMDB_PROVIDER_TIMEOUT = Number(process.env.IMDB_PROVIDER_TIMEOUT) || 15_000;
 const ENABLE_LEGACY_ENGINE = String(process.env.ENABLE_LEGACY_ENGINE || '').trim() === '1';
 
 function _isProviderEnabled(config, providerName) {
