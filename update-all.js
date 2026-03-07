@@ -45,6 +45,13 @@ function replaceMarkedSection(text, replacement) {
   return `${before}${replacement}${after}`;
 }
 
+function syncVersionedInstallPaths(text, version) {
+  return String(text || '').replace(
+    /\/install\/v\d+\.\d+\.\d+\/manifest\.json/g,
+    `/install/v${version}/manifest.json`
+  );
+}
+
 function buildReadmeReleaseBlock({ version, date, baseUrl }) {
   return [
     RELEASE_MARKERS.start,
@@ -100,16 +107,18 @@ function main() {
   const date = new Date().toISOString().slice(0, 10);
   const baseUrl = normalizeBaseUrl(process.env.VERCEL_BASE_URL || process.env.PUBLIC_BASE_URL);
 
-  const nextReadme = replaceMarkedSection(
+  let nextReadme = replaceMarkedSection(
     readText(readmePath),
     buildReadmeReleaseBlock({ version, date, baseUrl })
   );
+  nextReadme = syncVersionedInstallPaths(nextReadme, version);
   writeTextIfChanged(readmePath, nextReadme);
 
-  const nextDashboardLanding = replaceMarkedSection(
+  let nextDashboardLanding = replaceMarkedSection(
     readText(dashboardLandingPath),
     buildDashboardReleaseBlock({ version, date, baseUrl })
   );
+  nextDashboardLanding = syncVersionedInstallPaths(nextDashboardLanding, version);
   writeTextIfChanged(dashboardLandingPath, nextDashboardLanding);
 
   const nextChangelog = ensureChangelogEntry(readText(changelogPath), { version, date });

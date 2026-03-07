@@ -92,6 +92,7 @@ function manifestSupportsImdbStreams(manifest) {
 
 async function runOnce(baseUrl) {
   const expectedVersion = readLocalManifestVersion();
+  const versionedPrefix = expectedVersion ? `/install/v${expectedVersion}` : '';
 
   console.log(`Smoke target: ${baseUrl}`);
 
@@ -111,6 +112,16 @@ async function runOnce(baseUrl) {
     );
   }
   console.log(`OK /manifest.json -> ${manifest.json.id} v${manifest.json.version}`);
+
+  if (versionedPrefix) {
+    const versionedManifest = await fetchJson(baseUrl, `${versionedPrefix}/manifest.json`);
+    assert(versionedManifest.ok, `${versionedPrefix}/manifest.json returned HTTP ${versionedManifest.status}`);
+    assert(
+      versionedManifest.json && versionedManifest.json.version === expectedVersion,
+      `${versionedPrefix}/manifest.json version mismatch`
+    );
+    console.log(`OK ${versionedPrefix}/manifest.json`);
+  }
 
   const status = await fetchJson(baseUrl, '/api/status');
   assert(status.ok, `/api/status returned HTTP ${status.status}`);
@@ -135,7 +146,7 @@ async function runOnce(baseUrl) {
 
   if (process.env.VERCEL_SMOKE_STREAM_ID) {
     const type = String(process.env.VERCEL_SMOKE_STREAM_TYPE || 'series').trim() || 'series';
-    const route = `/stream/${encodeURIComponent(type)}/${process.env.VERCEL_SMOKE_STREAM_ID}.json`;
+    const route = `${versionedPrefix}/stream/${encodeURIComponent(type)}/${process.env.VERCEL_SMOKE_STREAM_ID}.json`;
     const stream = await fetchJson(baseUrl, route);
     assert(stream.ok, `${route} returned HTTP ${stream.status}`);
     assert(Array.isArray(stream.json?.streams), `${route} did not return a streams array`);

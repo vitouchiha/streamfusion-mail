@@ -6,6 +6,7 @@
  * Supports per-user configuration via base64url-encoded config in the URL path:
  *   /manifest.json                   → default (no proxy, no MFP)
  *   /BASE64_CONFIG/manifest.json     → custom user config
+ *   /install/vX.Y.Z/manifest.json    → versioned install path for cache-busting
  *
  * The same applies to all Stremio routes:
  *   /BASE64_CONFIG/catalog/:type/:id/:extra.json
@@ -106,6 +107,10 @@ function clientIpFrom(req) {
 
 function addonBaseUrlFrom(req) {
   return `${req.protocol}://${req.get('host')}`;
+}
+
+function currentInstallReleaseTag() {
+  return `v${manifest.version}`;
 }
 
 function copyProxyResponseHeaders(res, headers = {}) {
@@ -287,7 +292,12 @@ function buildManifest(config) {
 }
 
 // Manifest
-app.get(['/manifest.json', '/:config/manifest.json'], (req, res) => {
+app.get([
+  '/manifest.json',
+  '/:config/manifest.json',
+  '/install/:release/manifest.json',
+  '/:config/install/:release/manifest.json',
+], (req, res) => {
   const config = cfgFrom(req.params.config);
   stremioJson(res, buildManifest(config));
 });
@@ -298,6 +308,10 @@ app.get([
   '/catalog/:type/:id.json',
   '/:config/catalog/:type/:id/:extra.json',
   '/:config/catalog/:type/:id.json',
+  '/install/:release/catalog/:type/:id/:extra.json',
+  '/install/:release/catalog/:type/:id.json',
+  '/:config/install/:release/catalog/:type/:id/:extra.json',
+  '/:config/install/:release/catalog/:type/:id.json',
 ], async (req, res) => {
   const config = { ...cfgFrom(req.params.config), clientIp: clientIpFrom(req), addonBaseUrl: addonBaseUrlFrom(req) };
   const extra  = parseExtra(req.params.extra);
@@ -317,6 +331,8 @@ app.get([
 app.get([
   '/meta/:type/:id.json',
   '/:config/meta/:type/:id.json',
+  '/install/:release/meta/:type/:id.json',
+  '/:config/install/:release/meta/:type/:id.json',
 ], async (req, res) => {
   const config = { ...cfgFrom(req.params.config), clientIp: clientIpFrom(req), addonBaseUrl: addonBaseUrlFrom(req) };
   try {
@@ -336,6 +352,8 @@ app.get([
 app.get([
   '/stream/:type/:id.json',
   '/:config/stream/:type/:id.json',
+  '/install/:release/stream/:type/:id.json',
+  '/:config/install/:release/stream/:type/:id.json',
 ], async (req, res) => {
   const config = { ...cfgFrom(req.params.config), clientIp: clientIpFrom(req), addonBaseUrl: addonBaseUrlFrom(req) };
   try {
@@ -801,6 +819,7 @@ function esc(s) {
 function buildPage(host, config) {
   const v = manifest.version;
   const f = config || {};
+  const installReleaseTag = currentInstallReleaseTag();
   function esc(s) { return (s || '').replace(/"/g, '&quot;'); }
   
   return `<!DOCTYPE html>
@@ -937,6 +956,7 @@ function buildPage(host, config) {
             Attiva compatibilità con IMDb/Cinemeta (Consigliato)
           </label>
         </div>
+        <div class="hint">Il link generato usa un path di release versionato (${installReleaseTag}) per forzare il refresh del manifest in Stremio.</div>
       </div>
 
       <button type="submit" class="btn-submit">Ottieni Addon Nello Drama</button>
@@ -984,7 +1004,8 @@ document.addEventListener('DOMContentLoaded', function() {
         // Base64 configuration string
         var enc = b64e(JSON.stringify(c));
         var base = window.location.origin;
-        var finalUrl = enc ? (base + '/' + enc + '/manifest.json') : (base + '/manifest.json');
+        var installPath = '/install/${installReleaseTag}/manifest.json';
+        var finalUrl = enc ? (base + '/' + enc + installPath) : (base + installPath);
         
         // Translate format for stremio apps
         var stremioUrl = finalUrl.replace(/^https?:/, 'stremio:');

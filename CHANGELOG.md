@@ -491,6 +491,18 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) · Versi
 
 ---
 
+## [3.0.6] - 2026-03-07
+
+### Added
+- Nuovo path di installazione versionato `/install/v3.0.6/manifest.json` per forzare il refresh del transport URL in Stremio quando il manifest precedente resta in cache.
+
+### Changed
+- Le route `manifest`, `catalog`, `meta` e `stream` accettano ora anche il prefisso `/install/vX.Y.Z/...` senza rompere i path legacy.
+- La landing `/configure` genera ora di default il link install versionato, cosi un reinstall usa un URL nuovo invece del manifest gia cachato dal client.
+- Lo smoke test remoto Vercel verifica anche il manifest e lo stream sul path di installazione versionato.
+- `update-all.js` sincronizza automaticamente anche i link `/install/vX.Y.Z/manifest.json` in README e dashboard ad ogni release.
+
+---
 ## [3.0.5] - 2026-03-07
 
 ### Fixed
