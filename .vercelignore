@@ -4,7 +4,7 @@
 .env
 stack.env
 data/
-cache/
+/cache/
 *.log
 
 # Docker (solo per Mini PC, non serve su Vercel)
