@@ -40,6 +40,7 @@ const STREAM_TIMEOUT   = Number(process.env.STREAM_TIMEOUT)   || 30_000;
 const CINEMETA_TIMEOUT = 5_000;
 const IMDB_PROVIDER_TIMEOUT = Number(process.env.IMDB_PROVIDER_TIMEOUT) || 15_000;
 const ENABLE_LEGACY_ENGINE = String(process.env.ENABLE_LEGACY_ENGINE || '').trim() === '1';
+const ENABLE_GUARDASERIE_LEGACY_IMDB = String(process.env.ENABLE_GUARDASERIE_LEGACY_IMDB || '').trim() === '1';
 const IMDB_EPISODE_CACHE_TTL = Number(process.env.IMDB_EPISODE_CACHE_TTL) || 6 * 60 * 60_000;
 const IMDB_NO_MATCH_CACHE_TTL = Number(process.env.IMDB_NO_MATCH_CACHE_TTL) || 15 * 60_000;
 
@@ -341,7 +342,8 @@ async function _fetchFromImdbId(rawId, type, config) {
       forceSeasonOne: true,
     }), providerTimeout('drammatica.imdb')));
   }
-  if (useGuardaserie) {
+  const useGuardaserieLegacyImdb = useGuardaserie && (config?.enableLegacyGuardaserieImdb === true || ENABLE_GUARDASERIE_LEGACY_IMDB);
+  if (useGuardaserieLegacyImdb) {
     jobs.push(runImdbJob('guardaserie.imdb', () => _legacyProviderStreamsForImdb({
       provider: 'guardaserie', imdbId, titleCandidates, seasonNum, episodeNum, config,
       searchTimeout: 12_000,
@@ -635,14 +637,41 @@ function _bestMatch(metas, queryTitle) {
   const exact = metas.find(m => _normaliseTitle(m.name || m.title || '') === normQuery);
   if (exact) return exact;
 
-  // 2. Best fuzzy match (threshold 0.45 — slightly more permissive for romanised titles)
+  // 2. Best fuzzy match with token overlap guard to avoid false positives
+  // (e.g. "Game of Thrones" matching "Pyramid Game").
   let bestScore = 0;
+  let bestOverlap = 0;
   let bestItem  = null;
   for (const m of metas) {
-    const score = titleSimilarity(_normaliseTitle(m.name || m.title || ''), normQuery);
-    if (score > bestScore) { bestScore = score; bestItem = m; }
+    const candidate = _normaliseTitle(m.name || m.title || '');
+    const score = titleSimilarity(candidate, normQuery);
+    const overlap = _tokenOverlap(candidate, normQuery);
+    if (score > bestScore || (score === bestScore && overlap > bestOverlap)) {
+      bestScore = score;
+      bestOverlap = overlap;
+      bestItem = m;
+    }
   }
-  return bestScore >= 0.45 ? bestItem : null;
+
+  const accepted = bestScore >= 0.72 || (bestScore >= 0.58 && bestOverlap >= 0.5);
+  return accepted ? bestItem : null;
+}
+
+function _tokenOverlap(a, b) {
+  const stop = new Set(['the', 'a', 'an', 'of', 'and', 'la', 'il', 'lo', 'gli', 'le', 'di', 'del', 'della']);
+  const toSet = (s) => new Set(String(s || '')
+    .split(/\s+/)
+    .map(x => x.trim())
+    .filter(x => x.length >= 3 && !stop.has(x)));
+
+  const sa = toSet(a);
+  const sb = toSet(b);
+  if (!sa.size || !sb.size) return 0;
+
+  let inter = 0;
+  for (const t of sa) if (sb.has(t)) inter += 1;
+  const union = new Set([...sa, ...sb]).size;
+  return union ? inter / union : 0;
 }
 
 /**
