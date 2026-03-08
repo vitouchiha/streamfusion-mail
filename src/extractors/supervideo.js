@@ -76,7 +76,15 @@ async function extractSuperVideo(url, options = {}) {
     ]);
 
     if (packed && packed.value) {
-      return normalizeExtractorUrl(packed.value, embedUrl);
+      const finalUrl = normalizeExtractorUrl(packed.value, embedUrl);
+      if (!finalUrl) return null;
+      return {
+        url: finalUrl,
+        headers: {
+          "User-Agent": USER_AGENT,
+          "Referer": "https://supervideo.tv/"
+        }
+      };
     }
     return null;
   } catch (e) {
