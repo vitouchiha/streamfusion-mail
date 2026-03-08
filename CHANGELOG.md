@@ -491,6 +491,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) · Versi
 
 ---
 
+## [3.0.11] - 2026-03-08
+
+### Changed
+- L'extractor `SuperVideo` prova ora anche un fallback Browserless dopo `fetch` e `cloudscraper`, sfruttando `BROWSERLESS_URL` gia configurato su Vercel.
+- Questo serve in particolare quando il mirror EasyStreams arriva fino a `SuperVideo`, ma Cloudflare blocca sia il fetch diretto sia il parsing server-side semplice.
+
+---
 ## [3.0.10] - 2026-03-08
 
 ### Changed

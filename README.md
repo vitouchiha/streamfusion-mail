@@ -1,7 +1,7 @@
 # StreamFusion Mail
 
 <!-- release:meta:start -->
-- Release: `v3.0.10`
+- Release: `v3.0.11`
 - Date: `2026-03-08`
 - Remote smoke target: `https://streamfusion-mail.vercel.app`
 <!-- release:meta:end -->
@@ -30,7 +30,7 @@ Deploy rapido su Vercel:
 Il link di installazione consigliato usa ora un path versionato:
 
 ```text
-https://<tuo-deploy>.vercel.app/install/v3.0.10/manifest.json
+https://<tuo-deploy>.vercel.app/install/v3.0.11/manifest.json
 ```
 
 Questo forza Stremio a scaricare un transport URL nuovo quando serve invalidare la cache del manifest.
@@ -85,4 +85,5 @@ VERCEL_BASE_URL=https://tuo-addon.vercel.app npm run test:vercel
 - I manifest configurati hanno un `id` dedicato e il nome `Nello Drama Config`, cosi Stremio li tratta come addon distinti rispetto al manifest base.
 - Il parser Guardaserie usa anche il markup episodio `serie-<stagione>_<episodio>`, lo stesso pattern che compare nei mirror EasyStreams piu recenti.
 - Gli extractor host-specific ricevono anche `proxyUrl`, e `SuperVideo` prova un fallback `cloudscraper` se Cloudflare blocca il fetch diretto.
+- Se `BROWSERLESS_URL` e configurato, `SuperVideo` prova anche un fallback browser remoto per superare i mirror protetti da Cloudflare.
 - Il `manifest` base espone Cinemeta/IMDb di default, quindi gli stream EasyStreams su ID `tt*` funzionano anche senza URL configurata.

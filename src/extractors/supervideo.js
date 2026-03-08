@@ -6,6 +6,7 @@ const {
   normalizeExtractorUrl,
 } = require('./common');
 const { fetchWithCloudscraper } = require('../utils/fetcher');
+const { launchBrowser } = require('../utils/browser');
 
 function buildSuperVideoEmbedUrl(url) {
   const normalized = normalizeExtractorUrl(url);
@@ -59,8 +60,12 @@ async function extractSuperVideo(url, options = {}) {
         proxyUrl,
       });
       if (!html || html.includes("Cloudflare") || html.includes("Just a moment")) {
-        console.log(`[Extractors] SuperVideo cloudscraper fallback failed`);
-        return null;
+        console.log(`[Extractors] SuperVideo cloudscraper fallback failed, retrying with browser`);
+        html = await fetchWithBrowser(embedUrl, refererBase);
+        if (!html || html.includes("Cloudflare") || html.includes("Just a moment")) {
+          console.log(`[Extractors] SuperVideo browser fallback failed`);
+          return null;
+        }
       }
     }
 
@@ -77,6 +82,33 @@ async function extractSuperVideo(url, options = {}) {
   } catch (e) {
     console.error("[Extractors] SuperVideo extraction error:", e);
     return null;
+  }
+}
+
+async function fetchWithBrowser(url, refererBase) {
+  let browser = null;
+  try {
+    browser = await launchBrowser();
+    const page = await browser.newPage();
+    await page.setUserAgent(USER_AGENT);
+    if (refererBase) {
+      await page.setExtraHTTPHeaders({ Referer: refererBase });
+    }
+    await page.goto(url, {
+      waitUntil: 'domcontentloaded',
+      timeout: 25_000,
+    });
+    await page.waitForTimeout(2_500).catch(() => {});
+    const html = await page.content();
+    await page.close().catch(() => {});
+    return html;
+  } catch (error) {
+    console.error('[Extractors] SuperVideo browser fallback error:', error);
+    return null;
+  } finally {
+    if (browser) {
+      await browser.close().catch(() => {});
+    }
   }
 }
 
