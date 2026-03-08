@@ -28,6 +28,56 @@ async function fetchJsonWithTimeout(url, timeoutMs = CONTEXT_TIMEOUT) {
     }
 }
 
+// Mapping API implementation
+async function fetchMappingByRoute(route, value, season) {
+    const MAPPING_API_URL = "https://animemapping.stremio.dpdns.org";
+    if (!route || !value) return null;
+    const encodedValue = encodeURIComponent(String(value).trim());
+    let url = `${MAPPING_API_URL}/${route}/${encodedValue}`;
+    if (Number.isInteger(season) && season >= 0) {
+        url += `?season=${season}`;
+    }
+    return fetchJsonWithTimeout(url, 2000);
+}
+
+async function fetchMappingByKitsu(kitsuId, season) {
+    const MAPPING_API_URL = "https://animemapping.stremio.dpdns.org";
+    if (!kitsuId) return null;
+    const encodedValue = encodeURIComponent(String(kitsuId).trim());
+    let url = `${MAPPING_API_URL}/kitsu/${encodedValue}`;
+    if (Number.isInteger(season) && season >= 0) {
+        url += `?season=${season}`;
+    }
+    return fetchJsonWithTimeout(url, 2000);
+}
+
+function applyMappingHintsToContext(context, payload) {
+    if (!context || !payload || typeof payload !== 'object') return;
+    
+    // The payload from this API wraps mapping data inside `.mappings.ids` or `.kitsu`, `.requested` etc.
+    const mappingIds = payload.mappings?.ids || {};
+    const kitsuDirect = payload.kitsu?.id || payload.requested?.resolvedKitsuId;
+
+    const kitsuCandidate = String(kitsuDirect || mappingIds.kitsu || payload.kitsuId || payload.kitsu_id || '').trim();
+    if (/^\d+$/.test(kitsuCandidate)) {
+        context.kitsuId = kitsuCandidate;
+    }
+    
+    const tmdbCandidate = String(mappingIds.tmdb || payload.tmdbId || '').trim();
+    if (/^tmdb:\d+$/i.test(tmdbCandidate)) {
+        context.tmdbId = tmdbCandidate.split(':')[1];
+    } else if (/^\d+$/.test(tmdbCandidate)) {
+        context.tmdbId = tmdbCandidate;
+    } else if (/^tt\d+$/i.test(tmdbCandidate) && !context.imdbId) {
+        context.imdbId = tmdbCandidate;
+    }
+
+    const imdbCandidate = String(mappingIds.imdb || payload.imdbId || '').trim();
+    if (/^tt\d+$/i.test(imdbCandidate)) {
+        context.imdbId = imdbCandidate;
+    }
+}
+
 async function fetchTmdbIdFromImdb(imdbId, normalizedType) {
     if (!TMDB_API_KEY || !imdbId) return null;
     const url = `https://api.themoviedb.org/3/find/${encodeURIComponent(imdbId)}?api_key=${TMDB_API_KEY}&external_source=imdb_id`;
@@ -86,22 +136,41 @@ async function resolveProviderRequestContext(id, type, season, seasonProvided = 
             if (parts.length >= 2 && /^\d+$/.test(parts[1])) {
                 context.tmdbId = parts[1];
             }
+            if (context.tmdbId) {
+                const byTmdb = await fetchMappingByRoute('tmdb', context.tmdbId, context.requestedSeason);
+                if (byTmdb) applyMappingHintsToContext(context, byTmdb);
+            }
         } else if (idStr.startsWith('kitsu:')) {
             context.idType = 'kitsu';
             const parts = idStr.split(':');
             if (parts.length >= 2 && /^\d+$/.test(parts[1])) {
                 context.kitsuId = parts[1];
             }
+            if (context.kitsuId) {
+                const byKitsu = await fetchMappingByKitsu(context.kitsuId, context.requestedSeason);
+                if (byKitsu) applyMappingHintsToContext(context, byKitsu);
+            }
         } else if (/^tt\d+$/i.test(idStr)) {
             context.idType = 'imdb';
             context.imdbId = idStr;
-            const fallbackTmdbId = await fetchTmdbIdFromImdb(idStr, String(type || '').toLowerCase());
-            if (fallbackTmdbId !== null && fallbackTmdbId !== undefined) {
-                context.tmdbId = String(fallbackTmdbId);
+            const byImdb = await fetchMappingByRoute('imdb', idStr, context.requestedSeason);
+            if (byImdb) {
+                applyMappingHintsToContext(context, byImdb);
+            }
+
+            if (!context.tmdbId) {
+                const fallbackTmdbId = await fetchTmdbIdFromImdb(idStr, String(type || '').toLowerCase());
+                if (fallbackTmdbId !== null && fallbackTmdbId !== undefined) {
+                    context.tmdbId = String(fallbackTmdbId);
+                }
             }
         } else if (/^\d+$/.test(idStr)) {
             context.idType = 'tmdb-numeric';
             context.tmdbId = idStr;
+            if (context.tmdbId) {
+                const byTmdb = await fetchMappingByRoute('tmdb', context.tmdbId, context.requestedSeason);
+                if (byTmdb) applyMappingHintsToContext(context, byTmdb);
+            }
         }
     } catch {
         // Keep partial context.
@@ -161,7 +230,8 @@ async function getStreams(id, type, season, episode, config = {}) {
 
     const isKitsuRequest =
         String(providerContext?.idType || '').toLowerCase() === 'kitsu' ||
-        /^kitsu:\d+$/i.test(String(id || '').trim());
+        /^kitsu:\d+$/i.test(String(id || '').trim()) || (providerContext && !!providerContext.kitsuId);
+
     const isImdbRequest =
         String(providerContext?.idType || '').toLowerCase() === 'imdb' ||
         /^tt\d+$/i.test(String(id || '').trim());
@@ -175,8 +245,8 @@ async function getStreams(id, type, season, episode, config = {}) {
     } else if (normalizedType === 'anime') {
         selectedProviders.push('animeunity', 'animeworld', 'animesaturn', 'guardaserie', 'guardoserie');
     } else if (normalizedType === 'tv' || normalizedType === 'series') {
-        if (likelyAnime) {
-            selectedProviders.push('animeunity', 'animeworld', 'animesaturn', 'guardaserie', 'guardoserie');
+        if (likelyAnime || isKitsuRequest) {
+            selectedProviders.push('animeunity', 'animeworld', 'animesaturn', 'guardaserie', 'guardoserie', 'streamingcommunity');
         } else {
             if (isImdbRequest) {
                 selectedProviders.push('streamingcommunity', 'guardaserie', 'guardoserie');
