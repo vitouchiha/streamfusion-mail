@@ -491,6 +491,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) · Versi
 
 ---
 
+## [3.0.14] - 2026-03-08
+
+### Changed
+- Il bridge IMDb/Cinemeta verso EasyStreams passa ora anche `primaryTitle` e `titleCandidates` ai resolver downstream.
+- `Guardaserie` e `Guardoserie` usano questi titoli alternativi nel fallback search, migliorando i match su serie dove il nome Cinemeta/TMDB non coincide con quello usato dal mirror italiano.
+
+---
 ## [3.0.13] - 2026-03-08
 
 ### Fixed

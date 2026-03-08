@@ -318,7 +318,11 @@ async function _fetchFromImdbId(rawId, type, config) {
       type === 'movie' ? 'movie' : 'series',
       seasonNum,
       episodeNum,
-      config
+      {
+        ...config,
+        primaryTitle: titleCandidates[0] || title,
+        titleCandidates,
+      }
     )));
   }
 

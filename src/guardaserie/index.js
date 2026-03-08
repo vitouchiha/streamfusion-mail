@@ -73,6 +73,53 @@ function normalizeEpisodeLink(rawLink) {
   return null;
 }
 
+function normalizeTitleForMatch(rawTitle) {
+  return String(rawTitle || '')
+    .toLowerCase()
+    .replace(/&#(\d+);/g, (_, dec) => String.fromCharCode(dec))
+    .replace(/&quot;/g, '"')
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/[^a-z0-9]/g, '');
+}
+
+function buildSearchTitleCandidates(showInfo, providerContext, fallbackTitle) {
+  const values = [];
+  if (fallbackTitle) values.push(fallbackTitle);
+  if (showInfo) {
+    values.push(showInfo.name, showInfo.original_name, showInfo.title, showInfo.original_title);
+  }
+  if (providerContext) {
+    values.push(providerContext.primaryTitle);
+    if (Array.isArray(providerContext.titleCandidates)) {
+      values.push(...providerContext.titleCandidates);
+    }
+  }
+
+  const seen = new Set();
+  const output = [];
+  for (const value of values) {
+    const title = String(value || '').trim();
+    if (!title || title.length < 2) continue;
+    const normalized = normalizeTitleForMatch(title);
+    if (!normalized || seen.has(normalized)) continue;
+    seen.add(normalized);
+    output.push(title);
+  }
+  return output;
+}
+
+function titleMatchesCandidates(foundTitle, candidates) {
+  const normalizedFound = normalizeTitleForMatch(foundTitle);
+  if (!normalizedFound) return false;
+  return candidates.some((candidate) => {
+    const normalizedCandidate = normalizeTitleForMatch(candidate);
+    return normalizedCandidate &&
+      (normalizedFound.includes(normalizedCandidate) || normalizedCandidate.includes(normalizedFound));
+  });
+}
+
 function collectEpisodeLinks(showHtml, season, episode) {
   const links = new Set();
   const episodeIds = [
@@ -378,6 +425,10 @@ function getStreams(id, type, season, episode, providerContext = null) {
       } else if (imdbId) {
         title = imdbId;
       }
+      const candidateTitles = buildSearchTitleCandidates(showInfo, providerContext, title);
+      if (candidateTitles.length > 0) {
+        title = candidateTitles[0];
+      }
 
       const year = (showInfo && showInfo.first_air_date) ? showInfo.first_air_date.split("-")[0] : "";
       const metaYear = year ? parseInt(year) : null;
@@ -439,43 +490,44 @@ function getStreams(id, type, season, episode, providerContext = null) {
       // 2. Fallback to Title Search (Legacy)
       if (!showUrl) {
         let candidates = [];
-        console.log(`[Guardaserie] Searching by Title: ${title} (${year})`);
-        const params = new URLSearchParams();
-        params.append("do", "search");
-        params.append("subaction", "search");
-        params.append("story", title);
-        const searchUrl = `${getGuardaserieBaseUrl()}/index.php?${params.toString()}`;
-        const searchResponse = yield fetch(searchUrl, {
-          headers: {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-            "Referer": getGuardaserieBaseUrl()
-          }
-        });
-        const searchHtml = yield searchResponse.text();
+        console.log(`[Guardaserie] Searching by Title candidates: ${candidateTitles.join(" | ")} (${year})`);
         const resultRegex = /<div class="mlnh-2">\s*<h2>\s*<a href="([^"]+)" title="([^"]+)">[\s\S]*?<\/div>\s*<div class="mlnh-3 hdn">([^<]*)<\/div>/g;
-        let match;
+        const candidateMap = new Map();
+        for (const searchTitle of candidateTitles) {
+          const params = new URLSearchParams();
+          params.append("do", "search");
+          params.append("subaction", "search");
+          params.append("story", searchTitle);
+          const searchUrl = `${getGuardaserieBaseUrl()}/index.php?${params.toString()}`;
+          const searchResponse = yield fetch(searchUrl, {
+            headers: {
+              "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+              "Referer": getGuardaserieBaseUrl()
+            }
+          });
+          const searchHtml = yield searchResponse.text();
+          let match;
+          while ((match = resultRegex.exec(searchHtml)) !== null) {
+            const foundUrl = match[1];
+            const foundTitle = match[2];
+            const foundYearStr = match[3];
 
+            if (foundTitle.toUpperCase().includes("[SUB ITA]")) {
+              console.log(`[Guardaserie] Filtering out subbed result: ${foundTitle}`);
+              continue;
+            }
 
-
-        while ((match = resultRegex.exec(searchHtml)) !== null) {
-          const foundUrl = match[1];
-          const foundTitle = match[2];
-          const foundYearStr = match[3];
-
-          // Filter out titles with [SUB ITA]
-          if (foundTitle.toUpperCase().includes("[SUB ITA]")) {
-            console.log(`[Guardaserie] Filtering out subbed result: ${foundTitle}`);
-            continue;
+            if (titleMatchesCandidates(foundTitle, candidateTitles)) {
+              candidateMap.set(foundUrl, {
+                url: foundUrl,
+                title: foundTitle,
+                year: foundYearStr
+              });
+            }
           }
-
-          if (foundTitle.toLowerCase().includes(title.toLowerCase())) {
-            candidates.push({
-              url: foundUrl,
-              title: foundTitle,
-              year: foundYearStr
-            });
-          }
+          resultRegex.lastIndex = 0;
         }
+        candidates = Array.from(candidateMap.values());
 
         // Filter candidates
         for (const candidate of candidates) {
@@ -512,10 +564,7 @@ function getStreams(id, type, season, episode, providerContext = null) {
                   console.log(`[Guardaserie] Verified ${candidate.url} via show_imdb variable.`);
                   verifiedByVars = true;
                 } else if (titleVarMatch) {
-                  const norm = (s) => String(s).toLowerCase().replace(/[^a-z0-9]/g, "");
-                  const a = norm(titleVarMatch[1]);
-                  const b = norm(title);
-                  if (a && b && (a.includes(b) || b.includes(a))) {
+                  if (titleMatchesCandidates(titleVarMatch[1], candidateTitles)) {
                     console.log(`[Guardaserie] Tentatively verified ${candidate.url} via show_title variable.`);
                     verifiedByVars = true;
                   }

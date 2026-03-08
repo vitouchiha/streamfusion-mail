@@ -117,6 +117,11 @@ function isLikelyAnimeRequest(type) {
 
 function buildProviderRequestContext(context, config = {}) {
     if (!context) return null;
+    const titleCandidates = Array.isArray(config.titleCandidates)
+        ? config.titleCandidates
+            .map((value) => String(value || "").trim())
+            .filter((value, index, array) => value && array.indexOf(value) === index)
+        : [];
     return {
         __requestContext: true,
         idType: context.idType,
@@ -129,7 +134,9 @@ function buildProviderRequestContext(context, config = {}) {
         addonBaseUrl: String(config.addonBaseUrl || '').trim(),
         mfpUrl: String(config.mfpUrl || '').trim(),
         mfpKey: String(config.mfpKey || '').trim(),
-        proxyUrl: String(config.proxyUrl || '').trim()
+        proxyUrl: String(config.proxyUrl || '').trim(),
+        primaryTitle: String(config.primaryTitle || '').trim(),
+        titleCandidates
     };
 }
 

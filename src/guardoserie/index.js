@@ -120,6 +120,40 @@ function normalizePlayerLink(link) {
     return /^https?:\/\//i.test(normalized) ? normalized : null;
 }
 
+function normalizeTitleForMatch(value) {
+    return String(value || '')
+        .replace(/&#(\d+);/g, (_, dec) => String.fromCharCode(dec))
+        .replace(/&quot;/g, '"')
+        .replace(/&amp;/g, '&')
+        .replace(/&lt;/g, '<')
+        .replace(/&gt;/g, '>')
+        .toLowerCase()
+        .replace(/[^a-z0-9]/g, '')
+        .replace('iltronodispade', 'gameofthrones');
+}
+
+function buildSearchTitleCandidates(providerContext, ...titles) {
+    const values = [...titles];
+    if (providerContext) {
+        values.push(providerContext.primaryTitle);
+        if (Array.isArray(providerContext.titleCandidates)) {
+            values.push(...providerContext.titleCandidates);
+        }
+    }
+
+    const seen = new Set();
+    const output = [];
+    for (const value of values) {
+        const title = String(value || '').trim();
+        if (!title || title.length < 2) continue;
+        const normalized = normalizeTitleForMatch(title);
+        if (!normalized || seen.has(normalized)) continue;
+        seen.add(normalized);
+        output.push(title);
+    }
+    return output;
+}
+
 function extractPlayerLinkFromHtml(html) {
     if (!html) return null;
 
@@ -259,8 +293,9 @@ async function getStreams(id, type, season, episode, providerContext = null) {
         const title = showInfo.name || showInfo.original_name || showInfo.title || showInfo.original_title;
         const originalTitle = showInfo.original_title || showInfo.original_name;
         const year = (showInfo.first_air_date || showInfo.release_date || '').split('-')[0];
+        const searchTitles = buildSearchTitleCandidates(providerContext, title, originalTitle);
 
-        console.log(`[Guardoserie] Searching for: ${title} / ${originalTitle} (${year})`);
+        console.log(`[Guardoserie] Searching for: ${searchTitles.join(' / ')} (${year})`);
 
         // Search helper
         const searchProvider = async (query) => {
@@ -307,7 +342,7 @@ async function getStreams(id, type, season, episode, providerContext = null) {
         };
 
         let allResults = [];
-        const queries = [title, originalTitle].filter(q => q && q.length > 2);
+        const queries = searchTitles.filter(q => q && q.length > 2);
         for (const q of queries) {
             const res = await searchProvider(q);
             allResults.push(...res);
@@ -327,15 +362,16 @@ async function getStreams(id, type, season, episode, providerContext = null) {
         };
 
         // Sort results: exact matches first
-        const norm = (s) => decodeEntities(s).toLowerCase().replace(/[^a-z0-9]/g, '').replace('iltronodispade', 'gameofthrones');
-        const nTitle = norm(title);
-        const nOrig = norm(originalTitle || '');
+        const norm = (s) => normalizeTitleForMatch(decodeEntities(s));
+        const normalizedSearchTitles = searchTitles
+            .map((value) => norm(value))
+            .filter(Boolean);
 
         allResults.sort((a, b) => {
             const nA = norm(a.title);
             const nB = norm(b.title);
-            const exactA = nA === nTitle || nA === nOrig;
-            const exactB = nB === nTitle || nB === nOrig;
+            const exactA = normalizedSearchTitles.includes(nA);
+            const exactB = normalizedSearchTitles.includes(nB);
             if (exactA && !exactB) return -1;
             if (!exactA && exactB) return 1;
             return 0;
@@ -347,8 +383,10 @@ async function getStreams(id, type, season, episode, providerContext = null) {
             // Check title match first to avoid unnecessary fetches
             const nResult = norm(result.title);
 
-            const isExactMatch = nResult === nTitle || nResult === nOrig;
-            const isPartialMatch = nResult.includes(nTitle) || (nOrig && nResult.includes(nOrig));
+            const isExactMatch = normalizedSearchTitles.includes(nResult);
+            const isPartialMatch = normalizedSearchTitles.some((candidate) =>
+                candidate && (nResult.includes(candidate) || candidate.includes(nResult))
+            );
 
             if (isExactMatch || isPartialMatch) {
                 // Verify year in the page

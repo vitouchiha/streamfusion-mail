@@ -1,7 +1,7 @@
 # StreamFusion Mail
 
 <!-- release:meta:start -->
-- Release: `v3.0.13`
+- Release: `v3.0.14`
 - Date: `2026-03-08`
 - Remote smoke target: `https://streamfusion-mail.vercel.app`
 <!-- release:meta:end -->
@@ -30,7 +30,7 @@ Deploy rapido su Vercel:
 Il link di installazione consigliato usa ora un path versionato:
 
 ```text
-https://<tuo-deploy>.vercel.app/install/v3.0.13/manifest.json
+https://<tuo-deploy>.vercel.app/install/v3.0.14/manifest.json
 ```
 
 Questo forza Stremio a scaricare un transport URL nuovo quando serve invalidare la cache del manifest.
@@ -89,3 +89,4 @@ VERCEL_BASE_URL=https://tuo-addon.vercel.app npm run test:vercel
 - Se `BROWSERLESS_URL` e configurato, `SuperVideo` prova anche un fallback browser remoto per superare i mirror protetti da Cloudflare.
 - Il formatter web-playback wrappa anche gli HLS senza header custom nel proxy addon, cosi Stremio Web non filtra i mirror EasyStreams solo perche non sono MP4.
 - Il `manifest` base espone Cinemeta/IMDb di default, quindi gli stream EasyStreams su ID `tt*` funzionano anche senza URL configurata.
+- Il bridge IMDb/TMDB verso EasyStreams passa anche `titleCandidates` ai resolver, cosi `Guardaserie` e `Guardoserie` possono cercare anche titoli alternativi/originali quando il nome Cinemeta non basta.
