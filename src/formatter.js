@@ -161,15 +161,35 @@ function formatStream(stream, providerName) {
 
     behaviorHints.notWebReady = shouldSetNotWebReady(finalUrl, finalHeaders, behaviorHints);
 
-    const providerLabel = pName || (typeof providerName === 'string' ? providerName.charAt(0).toUpperCase() + providerName.slice(1) : 'Provider');
-    
+    let providerLabel = pName || (typeof providerName === 'string' ? providerName.charAt(0).toUpperCase() + providerName.slice(1) : 'Provider');
+    if (!providerLabel.includes('📡')) {
+        providerLabel = `📡 ${providerLabel}`;
+    }
+
     // finalName is the resolution/quality displayed in bold. Like EasyStreams.
-    const finalName = quality && quality !== 'Unknow' ? `🚀 ${quality}` : `🚀 ${providerLabel}`;
+    // Quality already includes "🚀" or "💿" from lines 78-83. So we only prepend if it's missing emojis.
+    let finalName = quality && quality !== 'Unknow' ? quality : providerLabel;
+    if (finalName === 'Unknow' || !finalName) finalName = '🚀 ' + providerLabel;
     
     // finalTitle is the rich multi-line description
     let finalTitle = `📁 ${stream.title || 'Stream'}`;
-    finalTitle += `\n📡 ${providerLabel}`;
-    if (language) finalTitle += `\n🗣 ${language} 🔍 StreamFusion`;
+    finalTitle += `\n${providerLabel}`;
+
+    if (language) {
+        let langStr = language;
+        // Se c'è già l'emoji, non la rimetto due volte.
+        if (langStr.includes('🗣')) {
+            finalTitle += `\n${langStr} 🔍 StreamFusion`;
+        } else {
+            // Alcuni vecchi flussi hanno bandiere 🇮🇹, rimuoviamo solo per simulare "IT" pulito o le lasciamo.
+            // EasyStreams usa "🗣 IT". Proviamo a ripulire o aggiungere solo l'emoji.
+            langStr = langStr.replace('🇮🇹', 'IT').replace('🇯🇵', 'JP').trim();
+            finalTitle += `\n🗣 ${langStr} 🔍 StreamFusion`;
+        }
+    } else {
+         finalTitle += `\n🗣 IT 🔍 StreamFusion`;
+    }
+
     if (desc) finalTitle += `\n📝 ${desc}`;
 
     const responseStream = {

@@ -1,4 +1,10 @@
-﻿## [3.0.15] - 2026-03-08
+﻿## [3.0.16] - 2026-03-08
+
+### Fixed
+- **UI Formatting Fix** - Risolto il problema delle doppie emoji nei nomi dei provider e nelle etichette dei server. Le grafiche ora riproducono fedelmente lo stile originale EasyStreams con etichette perfette come \🚀 FHD\ o \💿 HD\ senza duplicazioni visive.
+
+---
+## [3.0.15] - 2026-03-08
 
 ### Added
 - **Enhanced Stream UI** - Aggiornato il formatter per mostrare la risoluzione con emoji in evidenza (es. \🚀 1080p\) e un titolo multilinea più ricco con informazioni sul provider, server, lingua e altri dettagli. Simile ad EasyStreams.
@@ -628,4 +634,5 @@ _Next planned improvements:_
 - Release sync automatica: README, dashboard addon e smoke test remoto Vercel allineati.
 
 ---
+
 

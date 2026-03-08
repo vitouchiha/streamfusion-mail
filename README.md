@@ -1,7 +1,7 @@
 # StreamFusion Mail
 
 <!-- release:meta:start -->
-- Release: `v3.0.15`
+- Release: `v3.0.16`
 - Date: `2026-03-08`
 - Remote smoke target: `https://streamfusion-mail.vercel.app`
 <!-- release:meta:end -->
@@ -30,7 +30,7 @@ Deploy rapido su Vercel:
 Il link di installazione consigliato usa ora un path versionato:
 
 ```text
-https://<tuo-deploy>.vercel.app/install/v3.0.15/manifest.json
+https://<tuo-deploy>.vercel.app/install/v3.0.16/manifest.json
 ```
 
 Questo forza Stremio a scaricare un transport URL nuovo quando serve invalidare la cache del manifest.
