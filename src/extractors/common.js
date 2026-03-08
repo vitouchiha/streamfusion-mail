@@ -16,6 +16,8 @@ function getProxiedUrl(url) {
     // Check global variable (set by stremio_addon.js)
     if (typeof global !== 'undefined' && global.CF_PROXY_URL) {
       proxyUrl = global.CF_PROXY_URL;
+    } else if (typeof process !== 'undefined' && process.env && process.env.CF_PROXY_URL) {
+      proxyUrl = process.env.CF_PROXY_URL;
     }
   } catch (e) {
     // Safety for some RN environments

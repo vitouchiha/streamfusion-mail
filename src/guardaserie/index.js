@@ -633,6 +633,7 @@ function getStreams(id, type, season, episode, providerContext = null) {
           const displayName = `${title} ${season}x${episode}`;
           const extractedStreams = yield extractFromUrl(link, {
             refererBase: getGuardaserieBaseUrl(),
+            proxyUrl: providerContext?.proxyUrl,
           });
           if (!extractedStreams.length) return [];
 

@@ -128,7 +128,8 @@ function buildProviderRequestContext(context, config = {}) {
         imdbId: context.imdbId,
         addonBaseUrl: String(config.addonBaseUrl || '').trim(),
         mfpUrl: String(config.mfpUrl || '').trim(),
-        mfpKey: String(config.mfpKey || '').trim()
+        mfpKey: String(config.mfpKey || '').trim(),
+        proxyUrl: String(config.proxyUrl || '').trim()
     };
 }
 

@@ -5,6 +5,7 @@ const {
   getRefererBase,
   normalizeExtractorUrl,
 } = require('./common');
+const { fetchWithCloudscraper } = require('../utils/fetcher');
 
 function buildSuperVideoEmbedUrl(url) {
   const normalized = normalizeExtractorUrl(url);
@@ -29,12 +30,14 @@ function buildSuperVideoEmbedUrl(url) {
   }
 }
 
-async function extractSuperVideo(url, refererBase = null) {
+async function extractSuperVideo(url, options = {}) {
   try {
     const embedUrl = buildSuperVideoEmbedUrl(url);
     if (!embedUrl) return null;
 
+    let refererBase = typeof options === 'string' ? options : options.refererBase;
     if (!refererBase) refererBase = getRefererBase(embedUrl, "https://supervideo.tv/");
+    const proxyUrl = typeof options === 'object' ? String(options.proxyUrl || '').trim() : '';
 
     // Use proxy for the initial fetch to bypass Cloudflare if configured
     const proxiedUrl = getProxiedUrl(embedUrl);
@@ -48,8 +51,17 @@ async function extractSuperVideo(url, refererBase = null) {
     let html = await response.text();
 
     if (html.includes("Cloudflare") || response.status === 403) {
-      console.log(`[Extractors] SuperVideo (tv) returned 403/Cloudflare`);
-      return null;
+      console.log(`[Extractors] SuperVideo (tv) returned 403/Cloudflare, retrying with cloudscraper`);
+      html = await fetchWithCloudscraper(embedUrl, {
+        retries: 1,
+        timeout: 12_000,
+        referer: refererBase,
+        proxyUrl,
+      });
+      if (!html || html.includes("Cloudflare") || html.includes("Just a moment")) {
+        console.log(`[Extractors] SuperVideo cloudscraper fallback failed`);
+        return null;
+      }
     }
 
     const packed = extractPackedValue(html, [

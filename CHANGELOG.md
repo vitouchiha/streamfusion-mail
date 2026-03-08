@@ -491,6 +491,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) · Versi
 
 ---
 
+## [3.0.10] - 2026-03-08
+
+### Changed
+- L'extractor `SuperVideo` riprova ora con `cloudscraper` quando il fetch diretto prende `403/Cloudflare`, invece di scartare subito il mirror.
+- Il contesto provider passa anche `proxyUrl` agli extractor, cosi i mirror EasyStreams possono usare il proxy configurato dall'utente anche nel passo host-specific.
+
+---
 ## [3.0.9] - 2026-03-08
 
 ### Changed

@@ -1,6 +1,6 @@
 {
   "name": "nello-drama",
-  "version": "3.0.9",
+  "version": "3.0.10",
   "description": "L'aggregatore premium di Drama per Stremio",
   "main": "server.js",
   "engines": {

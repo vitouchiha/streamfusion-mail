@@ -23,7 +23,7 @@ const EXTRACTOR_REGISTRY = [
   {
     name: 'SuperVideo',
     match: /supervideo/i,
-    run: (url, options = {}) => extractSuperVideo(url, options.refererBase),
+    run: (url, options = {}) => extractSuperVideo(url, options),
   },
   {
     name: 'StreamTape',
