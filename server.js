@@ -422,6 +422,46 @@ app.get([
   }
 });
 
+// Debug Stream Route
+app.get([
+  '/debug-stream/:type/:id.json',
+  '/:config/debug-stream/:type/:id.json',
+], async (req, res) => {
+  const config = { ...cfgFrom(req.params.config), clientIp: clientIpFrom(req), addonBaseUrl: addonBaseUrlFrom(req) };
+  try {
+    const providersApi = getProvidersApi();
+    if (!providersApi?.handleStream) return res.json({ error: 'No stream handler' });
+    const result = await providersApi.handleStream(req.params.type, req.params.id, config);
+    const streams = Array.isArray(result?.streams) ? result.streams : [];
+    
+    // Add debug context to each stream
+    const debugStreams = streams.map(s => {
+      const urlStr = s.url || '';
+      return {
+        ...s,
+        _debug: {
+          hasUrl: !!s.url,
+          isHttps: urlStr.startsWith('https://'),
+          hasNotWebReady: s.behaviorHints?.notWebReady === true,
+          hasProxyHeaders: s.behaviorHints?.proxyHeaders != null,
+          hasGenericHeaders: s.headers != null,
+          behaviorHintsKeys: Object.keys(s.behaviorHints || {}),
+        }
+      };
+    });
+
+    res.json({
+      summary: {
+        total: streams.length,
+        webReady: streams.filter(s => s.behaviorHints?.notWebReady !== true).length,
+      },
+      streams: debugStreams
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message, stack: err.stack });
+  }
+});
+
 // ─── Health ───────────────────────────────────────────────────────────────────
 
 app.get('/health', (req, res) => {

@@ -166,24 +166,21 @@ function formatStream(stream, providerName) {
     if (desc) finalTitle += ` | ${desc}`;
     if (language) finalTitle += ` | ${language}`;
 
-    return {
-        ...stream, // Keep original properties
+    const responseStream = {
         url: finalUrl,
         name: finalName,
         title: finalTitle,
-        // Metadata for Stremio UI reconstruction (safer names for RN)
-        providerName: pName,
-        qualityTag: quality,
-        description: desc,
-        originalTitle: stream.title || 'Stream',
-        // Ensure language is set for Stremio/Nuvio sorting
-        language: language,
-        // Mark as formatted
-        _nuvio_formatted: true,
         behaviorHints: behaviorHints,
-        // Explicitly ensure root headers are preserved for Nuvio
-        headers: finalHeaders
     };
+
+    if (stream.subtitles) {
+        responseStream.subtitles = stream.subtitles;
+    }
+    if (stream.description) {
+        responseStream.description = stream.description;
+    }
+
+    return responseStream;
 }
 
 module.exports = { formatStream };
