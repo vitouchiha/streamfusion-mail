@@ -717,7 +717,16 @@ function getStreams(id, type, season, episode, providerContext = null) {
         return [];
       }));
       const nestedResults = yield Promise.all(streamPromises);
-      const results = (yield Promise.all(nestedResults.flat())).filter(Boolean);
+      let results = (yield Promise.all(nestedResults.flat())).filter(Boolean);
+      
+      // Deduplicate streams by URL
+      const uniqueUrls = new Set();
+      results = results.filter(s => {
+          if (!s.url || uniqueUrls.has(s.url)) return false;
+          uniqueUrls.add(s.url);
+          return true;
+      });
+
       return results
         .map(s => formatStream(s, "Guardaserie"))
         .filter(s => s !== null);
