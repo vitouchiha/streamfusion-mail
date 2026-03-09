@@ -50,13 +50,7 @@ function getProvidersApi() {
     return _providersApi;
   } catch (err) {
     log.error('providers bootstrap failed: ' + err.stack);
-    return {
-      isError: true,
-      errorStack: err.stack,
-      handleStream: async () => ({ streams: [{ title: 'Bootstrap Error', url: '#', description: err.stack.substring(0, 1000) }] }),
-      handleCatalog: async () => ({ metas: [] }),
-      handleMeta: async () => ({ meta: null })
-    };
+    return null;
   }
 }
 
