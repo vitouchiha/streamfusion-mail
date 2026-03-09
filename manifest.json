@@ -3,8 +3,8 @@
   "version": "3.0.20",
   "name": "Nello Stream",
   "description": "Il motore di aggregazione definitivo ispirato a Nello 🐶 per i Drama in streaming su Stremio con sub ITA.",
-  "logo": "https://raw.githubusercontent.com/vitouchiha/streamfusion-mail/master/public/nello_logo.png",
-  "background": "https://raw.githubusercontent.com/vitouchiha/streamfusion-mail/master/public/nello_bg.png",
+  "logo": "https://streamfusion-mail.vercel.app/public/nello_logo.png",
+  "background": "https://streamfusion-mail.vercel.app/public/nello_bg.png",
   "catalogs": [
     {
       "type": "series",
