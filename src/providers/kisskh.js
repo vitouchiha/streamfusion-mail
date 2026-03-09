@@ -697,7 +697,7 @@ async function getStreams(stremioId, config = {}) {
 
   return [
     {
-      name: '🚀 KissKH',
+      name: '� KissKH',
       description: `${titleLine}\n👤 KissKH\n🇰🇷 Sub ITA`,
       url: finalUrl,
       subtitles,

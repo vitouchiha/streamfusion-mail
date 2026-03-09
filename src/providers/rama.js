@@ -349,7 +349,7 @@ async function getStreams(id, config = {}) {
     }
     rawStreams.push({
       name: _qualityLabel(streamUrl),
-      description: `🚀 Rama · 📁 ${displayName} - ${ep.title}\n🇰🇷 Sub ITA`,
+      description: `� Rama · 📁 ${displayName} - ${ep.title}\n🇰🇷 Sub ITA`,
       url: streamUrl,
       behaviorHints: { bingeGroup: `streamfusion-rama-${seriesId}` },
     });

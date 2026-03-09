@@ -706,8 +706,7 @@ function getStreams(id, type, season, episode, providerContext = null) {
               headers: extracted.headers,
               name: `Guardaserie - ${extracted.name || 'Player'}`,
               title: extracted.isExternal ? `Web Browser - ${displayName}` : displayName,
-              quality: normalizedQuality,
-              behaviorHints: extracted.isExternal ? { notWebReady: true, bingeGroup: `guardaserie-${title}` } : undefined,
+              quality: normalizedQuality,                isExternal: extracted.isExternal,              behaviorHints: extracted.isExternal ? { notWebReady: true, bingeGroup: `guardaserie-${title}` } : undefined,
               type: "direct",
               addonBaseUrl: providerContext?.addonBaseUrl
             };

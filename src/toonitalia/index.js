@@ -354,8 +354,7 @@ console.log('found eps length:', episodes.length);
             streamsToReturn.push(formatStream({
                 name: "ToonItalia (VOE)",
                 title: "VOE Stream - Requires Web Browser",
-                url: targetEpisode.voeUrl,
-                behaviorHints: { notWebReady: true, bingeGroup: `toonitalia-${seriesName}` },
+                url: targetEpisode.voeUrl,                isExternal: true,                behaviorHints: { notWebReady: true, bingeGroup: `toonitalia-${seriesName}` },
                 addonBaseUrl: providerContext?.addonBaseUrl
             }, "ToonItalia"));
         }

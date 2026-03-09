@@ -58,9 +58,10 @@ function hasHeaders(headers) {
     return !!(headers && typeof headers === 'object' && Object.keys(headers).length > 0);
 }
 
-function shouldProxyForWebPlayback(url, headers, addonBaseUrl) {
+function shouldProxyForWebPlayback(stream, url, headers, addonBaseUrl) {
     if (!addonBaseUrl) return false;
     if (isHlsProxyPlaybackUrl(url)) return false;
+    if (stream.isExternal) return false; // Non proxare le pagine web esterne
     return !isMp4Url(url);
 }
 
@@ -131,7 +132,7 @@ function formatStream(stream, providerName) {
         finalHeaders = behaviorHints.headers;
     }
 
-    if (shouldProxyForWebPlayback(finalUrl, finalHeaders, addonBaseUrl)) {
+    if (shouldProxyForWebPlayback(stream, finalUrl, finalHeaders, addonBaseUrl)) {
         const proxiedUrl = buildProxyUrl(addonBaseUrl, finalUrl, finalHeaders);
         if (proxiedUrl) {
             finalUrl = proxiedUrl;
