@@ -75,6 +75,13 @@ function _isAnyProviderEnabled(config, providerNames) {
   return providerNames.some(name => _isProviderEnabled(config, name));
 }
 
+function _hasExplicitProviderSelection(config) {
+  const providers = config?.providers;
+  if (!providers || providers === 'all') return false;
+  if (Array.isArray(providers)) return providers.length > 0;
+  return String(providers).trim().length > 0 && String(providers).trim() !== 'all';
+}
+
 function _fallbackMetaForId(id, type = 'series') {
   const clean = String(id || '')
     .replace(/^(kisskh_|rama_|drammatica_|guardaserie_)/, '')
@@ -186,7 +193,7 @@ async function handleStream(type, id, config = {}) {
     streams = await _fetchFromImdbId(id, type, config);
   } else if (id.startsWith('tmdb:') || id.startsWith('kitsu:')) {
     const useEasystreams = _isAnyProviderEnabled(config, [
-      'all', 'easystreams', 'streamingcommunity', 'guardahd', 'guardaserie', 'guardoserie', 'animeunity', 'animeworld', 'animesaturn'
+      'all', 'easystreams', 'streamingcommunity', 'guardahd', 'guardaflix', 'guardaserie', 'guardoserie', 'animeunity', 'animeworld', 'animesaturn', 'cb01', 'eurostreaming'
     ]);
     
     if (useEasystreams) {
@@ -218,8 +225,9 @@ async function handleStream(type, id, config = {}) {
   // Deduplicate by URL
   const seen   = new Set();
   const unique = streams.filter(s => {
-    if (!s.url || seen.has(s.url)) return false;
-    seen.add(s.url);
+    const streamKey = String(s?.url || s?.externalUrl || '').trim();
+    if (!streamKey || seen.has(streamKey)) return false;
+    seen.add(streamKey);
     return true;
   });
 
@@ -279,24 +287,29 @@ async function _fetchFromImdbId(rawId, type, config) {
   log.info('title candidates', { imdbId, count: titleCandidates.length, titles: titleCandidates.slice(0, 5) });
 
   // 2. Search providers for the title, respecting `config.providers`
-  const useKisskh = _isProviderEnabled(config, 'kisskh');
-  const useRama = _isProviderEnabled(config, 'rama');
+  const hasExplicitProviderSelection = _hasExplicitProviderSelection(config);
   // Drammatica and legacy Guardaserie removed
   
   // Provider easystreams completi (guardahd, guardaserie, guardoserie,
-  // animeunity, animeworld, animesaturn, streamingcommunity)
+  // animeunity, animeworld, animesaturn, streamingcommunity, cb01, eurostreaming)
   const useEasystreams = _isAnyProviderEnabled(config, [
     'all',
     'easystreams',
     'streamingcommunity',
     'guardahd',
+    'guardaflix',
     'guardaserie',
     'guardaserie-es',
     'guardoserie',
     'animeunity',
     'animeworld',
     'animesaturn',
+    'cb01',
+    'eurostreaming',
   ]);
+
+  const useKisskh = _isProviderEnabled(config, 'kisskh') && (!useEasystreams || hasExplicitProviderSelection);
+  const useRama = _isProviderEnabled(config, 'rama') && (!useEasystreams || hasExplicitProviderSelection);
 
   const jobs = [];
   const imdbJobTimeout = Math.max(1_000, Number(config?.imdbJobTimeout) || IMDB_PROVIDER_TIMEOUT);
@@ -345,7 +358,7 @@ async function _fetchFromImdbId(rawId, type, config) {
         primaryTitle: titleCandidates[0] || title,
         titleCandidates,
       }
-    )));
+    ), 50_000)); // Guardaserie on Vercel can legitimately take ~35-45s when SuperVideo requires browser capture
   }
 
   // Legacy stream_engine is experimental and still includes mock adapters.

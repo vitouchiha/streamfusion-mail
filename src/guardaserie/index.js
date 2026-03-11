@@ -30,8 +30,11 @@ const USER_AGENT = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, l
 
 const { extractFromUrl } = require('../extractors');
 require('../fetch_helper.js');
-const { checkQualityFromPlaylist } = require('../quality_helper.js');
+const { checkQualityFromPlaylist, checkQualityFromText } = require('../quality_helper.js');
 const { formatStream } = require('../formatter.js');
+const { createLogger } = require('../utils/logger.js');
+
+const log = createLogger('guardaserie');
 
 function getQualityFromName(qualityStr) {
   if (!qualityStr) return 'Unknown';
@@ -677,9 +680,48 @@ function getStreams(id, type, season, episode, providerContext = null) {
         return [];
       }
       console.log(`[Guardaserie] Found ${links.length} potential links`);
-      const streamPromises = links.map((link) => __async(null, null, function* () {
+      // Separate SuperVideo mirrors from other extractors.
+      // SuperVideo links are tried SEQUENTIALLY — if one mirror is Cloudflare-
+      // blocked, we fall back to the next.  De-duplicate first.
+      const svLinksUnique = [];
+      const svSeen = new Set();
+      const otherLinks = [];
+      for (const link of links) {
+        if (/supervideo/i.test(link)) {
+          if (!svSeen.has(link)) { svSeen.add(link); svLinksUnique.push(link); }
+        } else {
+          otherLinks.push(link);
+        }
+      }
+      log.warn('link split', { svCount: svLinksUnique.length, otherCount: otherLinks.length });
+
+      const displayName = `${title} ${season}x${episode}`;
+
+      // Try SuperVideo mirrors sequentially (browser extraction is heavy)
+      let svStreams = [];
+      for (const svLink of svLinksUnique) {
         try {
-          const displayName = `${title} ${season}x${episode}`;
+          const extracted = yield extractFromUrl(svLink, {
+            refererBase: getGuardaserieBaseUrl(),
+            proxyUrl: providerContext?.proxyUrl,
+          });
+          log.warn('supervideo extracted streams', {
+            link: svLink,
+            count: extracted.length,
+            streams: extracted.map((s) => ({ url: s.url, name: s.name, isExternal: s.isExternal })),
+          });
+          if (extracted.length > 0) {
+            svStreams = extracted;
+            break; // got a working mirror, stop
+          }
+        } catch (e) {
+          log.warn('supervideo mirror failed, trying next', { link: svLink, error: e.message });
+        }
+      }
+
+      // Process other links concurrently
+      const otherStreamPromises = otherLinks.map((link) => __async(null, null, function* () {
+        try {
           const extractedStreams = yield extractFromUrl(link, {
             refererBase: getGuardaserieBaseUrl(),
             proxyUrl: providerContext?.proxyUrl,
@@ -688,8 +730,11 @@ function getStreams(id, type, season, episode, providerContext = null) {
 
           return extractedStreams.map((extracted) => __async(null, null, function* () {
             let quality = "HD";
-            if (extracted.url.includes('.m3u8')) {
-              const detected = yield checkQualityFromPlaylist(extracted.url, extracted.headers || {});
+            if (extracted.manifestBody) {
+              const detected = checkQualityFromText(extracted.manifestBody);
+              if (detected) quality = detected;
+            } else if (extracted.url.includes('.m3u8')) {
+              const detected = yield checkQualityFromPlaylist(extracted.url, extracted.headers || {}, extracted.proxyUrl);
               if (detected) quality = detected;
             } else {
               const lowerUrl = extracted.url.toLowerCase();
@@ -701,12 +746,25 @@ function getStreams(id, type, season, episode, providerContext = null) {
             }
 
             const normalizedQuality = getQualityFromName(quality);
+            const hasPlaybackHeaders = extracted.headers && Object.keys(extracted.headers).length > 0;
+            const behaviorHints = extracted.isExternal
+              ? { notWebReady: true, bingeGroup: `guardaserie-${title}` }
+              : hasPlaybackHeaders
+                ? {
+                    notWebReady: true,
+                    bingeGroup: `guardaserie-${title}`,
+                  }
+                : { bingeGroup: `guardaserie-${title}` };
             return {
               url: extracted.url,
               headers: extracted.headers,
+              proxyUrl: extracted.proxyUrl,
+              manifestBody: extracted.manifestBody,
               name: `Guardaserie - ${extracted.name || 'Player'}`,
               title: extracted.isExternal ? `Web Browser - ${displayName}` : displayName,
-              quality: normalizedQuality,                isExternal: extracted.isExternal,              behaviorHints: extracted.isExternal ? { notWebReady: true, bingeGroup: `guardaserie-${title}` } : undefined,
+              quality: normalizedQuality,
+              isExternal: extracted.isExternal,
+              behaviorHints,
               type: "direct",
               addonBaseUrl: providerContext?.addonBaseUrl
             };
@@ -716,9 +774,66 @@ function getStreams(id, type, season, episode, providerContext = null) {
         }
         return [];
       }));
-      const nestedResults = yield Promise.all(streamPromises);
-      let results = (yield Promise.all(nestedResults.flat())).filter(Boolean);
-      
+
+      // Build stream objects from successful SuperVideo extraction
+      const svStreamObjs = [];
+      for (const extracted of svStreams) {
+        let quality = "HD";
+        if (extracted.manifestBody) {
+          const detected = checkQualityFromText(extracted.manifestBody);
+          if (detected) quality = detected;
+        } else if (extracted.url && /serversicuro\.cc.*\.urlset\/master\.m3u8/i.test(extracted.url)) {
+          // serversicuro.cc multi-variant playlists always include 1080p as highest quality
+          quality = '1080p';
+        } else if (extracted.url && extracted.url.includes('.m3u8')) {
+          const detected = yield checkQualityFromPlaylist(extracted.url, extracted.headers || {}, extracted.proxyUrl);
+          if (detected) quality = detected;
+        } else if (extracted.url.includes('.m3u8')) {
+          const detected = yield checkQualityFromPlaylist(extracted.url, extracted.headers || {}, extracted.proxyUrl);
+          if (detected) quality = detected;
+        } else {
+          const lowerUrl = extracted.url.toLowerCase();
+          if (lowerUrl.includes("4k") || lowerUrl.includes("2160")) quality = "4K";
+          else if (lowerUrl.includes("1080") || lowerUrl.includes("fhd")) quality = "1080p";
+          else if (lowerUrl.includes("720") || lowerUrl.includes("hd")) quality = "720p";
+          else if (lowerUrl.includes("480") || lowerUrl.includes("sd")) quality = "480p";
+          else if (lowerUrl.includes("360")) quality = "360p";
+        }
+        const normalizedQuality = getQualityFromName(quality);
+        const hasPlaybackHeaders = extracted.headers && Object.keys(extracted.headers).length > 0;
+        // serversicuro.cc tokens are IP-locked to the CF Worker that extracted
+        // the embed page. Our HLS proxy runs on a different IP → always 403.
+        // Skip the HLS proxy and let Stremio's player handle the URL directly
+        // (same approach as EasyStreams / StreamVix).
+        const isIpLocked = /serversicuro\.cc/i.test(extracted.url);
+        const behaviorHints = extracted.isExternal
+          ? { notWebReady: true, bingeGroup: `guardaserie-${title}` }
+          : hasPlaybackHeaders
+            ? { notWebReady: true, bingeGroup: `guardaserie-${title}` }
+            : { bingeGroup: `guardaserie-${title}` };
+        if (isIpLocked) behaviorHints.proxyPlaybackDisabled = true;
+        svStreamObjs.push({
+          url: extracted.url,
+          headers: extracted.headers,
+          proxyUrl: extracted.proxyUrl,
+          manifestBody: extracted.manifestBody,
+          name: `Guardaserie - ${extracted.name || 'Player'}`,
+          title: extracted.isExternal ? `Web Browser - ${displayName}` : displayName,
+          quality: normalizedQuality,
+          isExternal: extracted.isExternal,
+          behaviorHints,
+          type: "direct",
+          addonBaseUrl: providerContext?.addonBaseUrl
+        });
+      }
+
+      const nestedResults = yield Promise.all(otherStreamPromises);
+      let results = [...svStreamObjs, ...(yield Promise.all(nestedResults.flat())).filter(Boolean)];
+
+      // Always filter out external fallbacks – SuperVideo embed URLs are useless
+      // as "Web Browser" entries in Stremio; only keep direct playback streams.
+      results = results.filter((stream) => stream && !stream.isExternal);
+
       // Deduplicate streams by provider name + quality to avoid duplicate SuperVideo/Mixdrop mirrors
       const uniqueKeys = new Set();
       results = results.filter(s => {

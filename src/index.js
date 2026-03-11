@@ -1,4 +1,5 @@
 const guardahd = require('./guardahd/index');
+const guardaflix = require('./guardaflix/index');
 const toonitalia = require('./toonitalia/index');
 const loonex = require('./loonex/index');
 const guardaserie = require('./guardaserie/index');
@@ -7,7 +8,10 @@ const streamingcommunity = require('./streamingcommunity/index');
 const animeunity = require('./animeunity/index');
 const animeworld = require('./animeworld/index');
 const animesaturn = require('./animesaturn/index');
+const cb01 = require('./cb01/index');
+const eurostreaming = require('./eurostreaming/index');
 const { createTimeoutSignal } = require('./fetch_helper.js');
+const { wrapProviderStreamsWithMfp } = require('./utils/mediaflow');
 
 const TMDB_API_KEY = '68e094699525b18a70bab2f86b1fa706';
 const CONTEXT_TIMEOUT = 3000;
@@ -208,13 +212,51 @@ function buildProviderRequestContext(context, config = {}) {
         mfpUrl: String(config.mfpUrl || '').trim(),
         mfpKey: String(config.mfpKey || '').trim(),
         proxyUrl: String(config.proxyUrl || '').trim(),
+        providers: config.providers,
         primaryTitle: String(config.primaryTitle || '').trim(),
         titleCandidates
     };
 }
 
+function normalizeRequestedProviders(config) {
+    const raw = config && config.providers;
+    if (!raw || raw === 'all' || raw === 'easystreams') return null;
+
+    const values = Array.isArray(raw)
+        ? raw
+        : String(raw)
+            .split(',')
+            .map((value) => value.trim())
+            .filter(Boolean);
+
+    const aliasMap = new Map([
+        ['streamingcommunity', 'streamingcommunity'],
+        ['guardahd', 'guardahd'],
+        ['guardaflix', 'guardaflix'],
+        ['guardaserie', 'guardaserie'],
+        ['guardaserie-es', 'guardaserie'],
+        ['guardoserie', 'guardoserie'],
+        ['animeunity', 'animeunity'],
+        ['animeworld', 'animeworld'],
+        ['animesaturn', 'animesaturn'],
+        ['toonitalia', 'toonitalia'],
+        ['loonex', 'loonex'],
+        ['cb01', 'cb01'],
+        ['eurostreaming', 'eurostreaming'],
+    ]);
+
+    const normalized = new Set();
+    for (const value of values) {
+        const key = String(value || '').trim().toLowerCase();
+        if (!key || key === 'all' || key === 'easystreams') return null;
+        const mapped = aliasMap.get(key);
+        if (mapped) normalized.add(mapped);
+    }
+
+    return normalized.size > 0 ? normalized : null;
+}
+
 async function getStreams(id, type, season, episode, config = {}) {
-    const streams = [];
     const normalizedType = String(type || '').toLowerCase();
     const parsedNormalizedSeason = Number.parseInt(season, 10);
     const normalizedSeason =
@@ -231,6 +273,7 @@ async function getStreams(id, type, season, episode, config = {}) {
     const sharedContext = buildProviderRequestContext(providerContext, config);
     const promises = [];
     const likelyAnime = isLikelyAnimeRequest(normalizedType);
+    const requestedProviders = normalizeRequestedProviders(config);
 
     const isKitsuRequest =
         String(providerContext?.idType || '').toLowerCase() === 'kitsu' ||
@@ -244,7 +287,7 @@ async function getStreams(id, type, season, episode, config = {}) {
         if (likelyAnime || isKitsuRequest) {
             selectedProviders.push('animeunity', 'animeworld', 'animesaturn', 'toonitalia', 'loonex', 'guardoserie', 'streamingcommunity', 'guardahd');
         } else {
-            selectedProviders.push('streamingcommunity', 'guardahd', 'guardoserie', 'toonitalia', 'loonex');
+            selectedProviders.push('streamingcommunity', 'guardahd', 'guardaflix', 'guardoserie', 'toonitalia', 'loonex', 'cb01');
         }
     } else if (normalizedType === 'anime') {
         selectedProviders.push('animeunity', 'animeworld', 'animesaturn', 'toonitalia', 'loonex', 'guardaserie', 'guardoserie');
@@ -253,9 +296,9 @@ async function getStreams(id, type, season, episode, config = {}) {
             selectedProviders.push('animeunity', 'animeworld', 'animesaturn', 'toonitalia', 'loonex', 'guardaserie', 'guardoserie', 'streamingcommunity');
         } else {
             if (isImdbRequest) {
-                selectedProviders.push('streamingcommunity', 'guardaserie', 'guardoserie', 'toonitalia', 'loonex');
+                selectedProviders.push('streamingcommunity', 'guardaserie', 'eurostreaming', 'cb01', 'toonitalia', 'loonex');
             } else {
-                selectedProviders.push('streamingcommunity', 'guardaserie', 'guardoserie', 'animeunity', 'animeworld', 'animesaturn', 'toonitalia', 'loonex');
+                selectedProviders.push('streamingcommunity', 'guardaserie', 'guardoserie', 'animeunity', 'animeworld', 'animesaturn', 'toonitalia', 'loonex', 'eurostreaming', 'cb01');
             }
         }
     } else {
@@ -279,21 +322,43 @@ async function getStreams(id, type, season, episode, config = {}) {
           ]).finally(() => clearTimeout(timeoutHandle));
       };
 
+      // ── MFP-selective helpers ────────────────────────────────────────────────
+      // Providers where MFP is applied instead of the internal HLS proxy.
+      // For all other providers, MFP is NOT applied (it can break playback).
+      const MFP_PROVIDERS = new Set(['guardoserie', 'guardaflix', 'animesaturn', 'animeunity', 'guardahd', 'guardaserie']);
+
+      // When MFP is configured, pass a context without addonBaseUrl to these providers
+      // so formatStream doesn't apply the internal proxy (avoids double-wrapping).
+      const ctxFor = (providerName) =>
+        (sharedContext.mfpUrl && MFP_PROVIDERS.has(providerName))
+          ? { ...sharedContext, addonBaseUrl: '' }
+          : sharedContext;
+
+      // Post-process a provider's stream promise with MFP when applicable
+      const withMfp = (providerName, streamsPromise) => {
+        if (!sharedContext.mfpUrl || !MFP_PROVIDERS.has(providerName)) return streamsPromise;
+        return streamsPromise.then(ss => wrapProviderStreamsWithMfp(ss, sharedContext));
+      };
+      // ────────────────────────────────────────────────────────────────────────
+
       for (const providerName of [...new Set(selectedProviders)]) {
+          if (requestedProviders && !requestedProviders.has(providerName)) {
+              continue;
+          }
           if (providerName === 'streamingcommunity') {
               promises.push(withProviderTimeout('StreamingCommunity', streamingcommunity.getStreams(id, normalizedType, effectiveSeason, normalizedEpisode, sharedContext), 14000));
               continue;
           }
           if (providerName === 'guardahd') {
-              promises.push(withProviderTimeout('GuardaHD', guardahd.getStreams(id, normalizedType, effectiveSeason, normalizedEpisode, sharedContext)));
+              promises.push(withProviderTimeout('GuardaHD', withMfp('guardahd', guardahd.getStreams(id, normalizedType, effectiveSeason, normalizedEpisode, ctxFor('guardahd'))), 22000));
               continue;
           }
           if (providerName === 'guardaserie') {
-              promises.push(withProviderTimeout('Guardaserie', guardaserie.getStreams(id, normalizedType, effectiveSeason, normalizedEpisode, sharedContext)));
+              promises.push(withProviderTimeout('Guardaserie', withMfp('guardaserie', guardaserie.getStreams(id, normalizedType, effectiveSeason, normalizedEpisode, ctxFor('guardaserie'))), 45000));
               continue;
           }
           if (providerName === 'animeunity') {
-              promises.push(withProviderTimeout('AnimeUnity', animeunity.getStreams(id, normalizedType, effectiveSeason, normalizedEpisode, sharedContext)));
+              promises.push(withProviderTimeout('AnimeUnity', withMfp('animeunity', animeunity.getStreams(id, normalizedType, effectiveSeason, normalizedEpisode, ctxFor('animeunity'))), 25000));
               continue;
           }
           if (providerName === 'animeworld') {
@@ -301,30 +366,82 @@ async function getStreams(id, type, season, episode, config = {}) {
               continue;
           }
           if (providerName === 'animesaturn') {
-              promises.push(withProviderTimeout('AnimeSaturn', animesaturn.getStreams(id, normalizedType, effectiveSeason, normalizedEpisode, sharedContext)));
+              promises.push(withProviderTimeout('AnimeSaturn', withMfp('animesaturn', animesaturn.getStreams(id, normalizedType, effectiveSeason, normalizedEpisode, ctxFor('animesaturn')))));
               continue;
           }
           if (providerName === 'toonitalia') {
-                promises.push(withProviderTimeout('ToonItalia', toonitalia.getStreams(id, normalizedType, effectiveSeason, normalizedEpisode, sharedContext)));
+                promises.push(withProviderTimeout('ToonItalia', toonitalia.getStreams(id, normalizedType, effectiveSeason, normalizedEpisode, sharedContext), 8000));
+                continue;
+            }
+            if (providerName === 'cb01') {
+              promises.push(withProviderTimeout('CB01', cb01.getStreams(id, normalizedType, effectiveSeason, normalizedEpisode, sharedContext), 25000));
+                continue;
+            }
+            if (providerName === 'eurostreaming') {
+              promises.push(withProviderTimeout('Eurostreaming', eurostreaming.getStreams(id, normalizedType, effectiveSeason, normalizedEpisode, sharedContext), 25000));
+                continue;
+            }
+            if (providerName === 'guardaflix') {
+                promises.push(withProviderTimeout('Guardaflix', withMfp('guardaflix', guardaflix.getStreams(id, normalizedType, effectiveSeason, normalizedEpisode, ctxFor('guardaflix'))), 20000));
                 continue;
             }
             if (providerName === 'loonex') {
-                promises.push(withProviderTimeout('Loonex', loonex.getStreams(id, normalizedType, effectiveSeason, normalizedEpisode, sharedContext)));
+                promises.push(withProviderTimeout('Loonex', loonex.getStreams(id, normalizedType, effectiveSeason, normalizedEpisode, sharedContext), 8000));
                 continue;
             }
             if (providerName === 'guardoserie') {
-              promises.push(withProviderTimeout('Guardoserie', guardoserie.getStreams(id, normalizedType, effectiveSeason, normalizedEpisode, sharedContext)));
+              promises.push(withProviderTimeout('Guardoserie', withMfp('guardoserie', guardoserie.getStreams(id, normalizedType, effectiveSeason, normalizedEpisode, ctxFor('guardoserie')))));
         }
     }
 
-    const results = await Promise.all(promises);
-    for (const result of results) {
-        if (result.status === 'fulfilled' && result.streams) {
-            streams.push(...result.streams);
-        }
-    }
+    // Fast-path: collect streams as they arrive.
+    // Strategy: absolute cap of 25s from start. Once the first provider returns
+    // streams, give remaining providers a grace period to also finish.
+    // Grace = min(remaining time until cap, GRACE_MS).
+    const allStreams = [];
+    const settled = new Map();
 
-    return streams;
+    const ABSOLUTE_CAP_MS = 25000; // never wait more than 25s total
+    const GRACE_AFTER_FIRST_MS = 12000; // 12s grace after first streams arrive
+
+    await new Promise((resolveAll) => {
+      let resolved = false;
+      const finish = () => { if (!resolved) { resolved = true; resolveAll(); } };
+
+      // Hard cap: always resolve after ABSOLUTE_CAP_MS
+      const capTimeout = setTimeout(finish, ABSOLUTE_CAP_MS);
+
+      let graceTimeout = null;
+
+      for (const p of promises) {
+        p.then((result) => {
+          if (resolved) return;
+          settled.set(result.provider, result);
+          if (result.status === 'fulfilled' && result.streams?.length > 0) {
+            allStreams.push(...result.streams);
+            // Start grace timer on first successful result
+            if (!graceTimeout) {
+              graceTimeout = setTimeout(finish, GRACE_AFTER_FIRST_MS);
+            }
+          }
+          // All done? Resolve immediately
+          if (settled.size >= promises.length) {
+            clearTimeout(capTimeout);
+            if (graceTimeout) clearTimeout(graceTimeout);
+            finish();
+          }
+        });
+      }
+
+      // Safety fallback
+      Promise.all(promises).then(() => {
+        clearTimeout(capTimeout);
+        if (graceTimeout) clearTimeout(graceTimeout);
+        finish();
+      });
+    });
+
+    return allStreams;
 }
 
 module.exports = { getStreams };

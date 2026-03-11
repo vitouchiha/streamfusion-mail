@@ -29,6 +29,11 @@ const { extractFromUrl } = require('../extractors');
 require('../fetch_helper.js');
 const { formatStream } = require('../formatter.js');
 const { checkQualityFromPlaylist, getQualityFromUrl } = require('../quality_helper.js');
+const { launchBrowser } = require('../utils/browser.js');
+const { createLogger } = require('../utils/logger.js');
+const { fetchWithCloudscraper } = require('../utils/fetcher.js');
+
+const log = createLogger('guardahd');
 
 function getQualityFromName(qualityStr) {
   if (!qualityStr) return 'Unknown';
@@ -122,6 +127,99 @@ function getMetadata(id, type) {
     }
   });
 }
+
+function normalizeMirrorUrl(rawUrl) {
+  const value = String(rawUrl || '').trim();
+  if (!value || value === '#') return null;
+  if (value.startsWith('//')) return `https:${value}`;
+  if (/^https?:/i.test(value)) return value;
+  return null;
+}
+
+function collectLegacyGuardaHdLinks(html) {
+  const links = [];
+  const iframeRegex = /<iframe[^>]+id=["']_player["'][^>]+src=["']([^"']+)["']/i;
+  const iframeMatch = iframeRegex.exec(html);
+  if (iframeMatch) {
+    const normalized = normalizeMirrorUrl(iframeMatch[1]);
+    if (normalized) links.push({ url: normalized, name: 'Active Player' });
+  }
+
+  const linkRegex = /data-link=["']([^"']+)["']/g;
+  let match;
+  while ((match = linkRegex.exec(html)) !== null) {
+    const normalized = normalizeMirrorUrl(match[1]);
+    if (normalized) links.push({ url: normalized, name: 'Alternative' });
+  }
+
+  return links;
+}
+
+function collectStreamvixMovieLinks(html) {
+  const results = [];
+  const seen = new Set();
+  const blocks = [
+    { regex: /<ul[^>]+class=["'][^"']*_player-mirrors[^"']*["'][^>]*>([\s\S]*?)<\/ul>/i, name: 'Main Mirror' },
+    { regex: /<[^>]+class=["'][^"']*_hidden-mirrors[^"']*["'][^>]*>([\s\S]*?)<\/[^>]+>/i, name: 'Hidden Mirror' },
+  ];
+
+  for (const block of blocks) {
+    const blockMatch = html.match(block.regex);
+    if (!blockMatch) continue;
+    for (const match of blockMatch[1].matchAll(/data-link=["']([^"']+)["']/g)) {
+      const normalized = normalizeMirrorUrl(match[1]);
+      if (!normalized) continue;
+      if (/mostraguarda/i.test(normalized)) continue;
+      if (/streamtape\.com/i.test(normalized)) continue;
+      if (seen.has(normalized)) continue;
+      seen.add(normalized);
+      results.push({ url: normalized, name: block.name });
+    }
+  }
+
+  if (results.length > 0) return results;
+
+  for (const match of html.matchAll(/data-link=["']([^"']+)["']/g)) {
+    const normalized = normalizeMirrorUrl(match[1]);
+    if (!normalized) continue;
+    if (/mostraguarda/i.test(normalized)) continue;
+    if (/streamtape\.com/i.test(normalized)) continue;
+    if (seen.has(normalized)) continue;
+    seen.add(normalized);
+    results.push({ url: normalized, name: 'Mirror' });
+  }
+
+  return results;
+}
+
+async function fetchHtmlWithBrowser(url, refererBase) {
+  let browser = null;
+  try {
+    browser = await launchBrowser();
+    const page = await browser.newPage();
+    await page.setUserAgent(USER_AGENT);
+    if (refererBase) {
+      await page.setExtraHTTPHeaders({ Referer: refererBase });
+    }
+    await page.goto(url, {
+      waitUntil: 'networkidle2',
+      timeout: 25000,
+    });
+    await new Promise((resolve) => setTimeout(resolve, 2000));
+    const html = await page.content();
+    const finalUrl = page.url();
+    await page.close().catch(() => {});
+    return { html, finalUrl };
+  } catch (error) {
+    log.warn('browser html fetch failed', { url, error: error.message });
+    return null;
+  } finally {
+    if (browser) {
+      await browser.close().catch(() => {});
+    }
+  }
+}
+
 function getStreams(id, type, season, episode, providerContext = null) {
   if (['series', 'tv'].includes(String(type).toLowerCase())) return [];
   return __async(this, null, function* () {
@@ -147,38 +245,81 @@ function getStreams(id, type, season, episode, providerContext = null) {
         ? (metadata.title || metadata.name || metadata.original_title || metadata.original_name) 
         : (normalizedType === "movie" ? "Film Sconosciuto" : "Serie TV");
     
-    let url;
     const baseUrl = getGuardaHdBaseUrl();
-    if (normalizedType === "movie") {
-      url = `${baseUrl}/set-movie-a/${imdbId}`;
-    } else if (normalizedType === "tv") {
-      url = `${baseUrl}/set-tv-a/${imdbId}/${season}/${episode}`;
-    } else {
+    if (normalizedType !== "movie") {
       return [];
     }
+
     try {
-      const response = yield fetch(url, {
-        headers: {
-          "User-Agent": USER_AGENT,
-          "Referer": baseUrl
-        }
+      const primaryUrl = `${baseUrl}/set-movie-a/${imdbId}`;
+      const fallbackMovieUrl = `${baseUrl}/movie/${encodeURIComponent(imdbId)}`;
+      const proxyUrl = String(providerContext?.proxyUrl || '').trim();
+
+      let html = '';
+      let links = [];
+
+      html = yield fetchWithCloudscraper(primaryUrl, {
+        referer: baseUrl,
+        timeout: 12000,
+        retries: 2,
+        proxyUrl,
       });
-      if (!response.ok) return [];
-      const html = yield response.text();
+      if (html) {
+        links = collectLegacyGuardaHdLinks(html);
+        log.info('primary page fetched', {
+          imdbId,
+          status: 200,
+          links: links.length,
+        });
+      }
+
+      if (!links.length) {
+        html = yield fetchWithCloudscraper(fallbackMovieUrl, {
+          referer: baseUrl,
+          timeout: 12000,
+          retries: 2,
+          proxyUrl,
+        });
+        if (html) {
+          links = collectStreamvixMovieLinks(html);
+          log.info('fallback page fetched', {
+            imdbId,
+            status: 200,
+            links: links.length,
+          });
+        }
+      }
+
+      if (!links.length) {
+        const browserPrimary = yield fetchHtmlWithBrowser(primaryUrl, baseUrl);
+        if (browserPrimary && browserPrimary.html) {
+          html = browserPrimary.html;
+          links = collectLegacyGuardaHdLinks(html);
+          log.info('browser primary page fetched', {
+            imdbId,
+            finalUrl: browserPrimary.finalUrl,
+            links: links.length,
+          });
+        }
+      }
+
+      if (!links.length) {
+        const browserFallback = yield fetchHtmlWithBrowser(fallbackMovieUrl, baseUrl);
+        if (browserFallback && browserFallback.html) {
+          html = browserFallback.html;
+          links = collectStreamvixMovieLinks(html);
+          log.info('browser fallback page fetched', {
+            imdbId,
+            finalUrl: browserFallback.finalUrl,
+            links: links.length,
+          });
+        }
+      }
+
+      if (!links.length) return [];
+
       const streams = [];
-      const iframeRegex = /<iframe[^>]+id=["']_player["'][^>]+src=["']([^"']+)["']/;
-      const iframeMatch = iframeRegex.exec(html);
-      const links = [];
-      if (iframeMatch) {
-        links.push({ url: iframeMatch[1], name: "Active Player" });
-      }
-      const linkRegex = /data-link=["']([^"']+)["']/g;
-      let match;
-      while ((match = linkRegex.exec(html)) !== null) {
-        links.push({ url: match[1], name: "Alternative" });
-      }
-      
-      const displayName = normalizedType === "movie" ? title : `${title} ${season}x${episode}`;
+      const displayName = title;
       const processUrl = async (link) => {
         let streamUrl = link.url;
         if (streamUrl.startsWith("//")) streamUrl = "https:" + streamUrl;
@@ -201,12 +342,20 @@ function getStreams(id, type, season, episode, providerContext = null) {
             }
 
             const normalizedQuality = getQualityFromName(quality);
+            const hasPlaybackHeaders = extracted.headers && Object.keys(extracted.headers).length > 0;
+            const behaviorHints = extracted.isExternal
+              ? { notWebReady: true }
+              : hasPlaybackHeaders
+                ? { notWebReady: true, proxyPlaybackDisabled: true }
+                : undefined;
 
             streams.push({
               name: `GuardaHD - ${extracted.name || 'Player'}`,
-              title: displayName,
+              title: extracted.isExternal ? `Web Browser - ${displayName}` : displayName,
               url: extracted.url,
               headers: extracted.headers,
+              isExternal: extracted.isExternal,
+              behaviorHints,
               quality: normalizedQuality,
               type: "direct",
               addonBaseUrl: providerContext?.addonBaseUrl

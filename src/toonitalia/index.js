@@ -349,14 +349,33 @@ console.log('found eps length:', episodes.length);
         
         // Toonitalia primarily returns VOE.
         if (targetEpisode.voeUrl) {
-            // VOE urls are resolved normally via extractors (if Voe is supported natively here) or handled as direct url.
-            // Since StreamFusionMail extractors might not have VOE, we can just return it as behaviorHints link.
-            streamsToReturn.push(formatStream({
-                name: "ToonItalia (VOE)",
-                title: "VOE Stream - Requires Web Browser",
-                url: targetEpisode.voeUrl,                isExternal: true,                behaviorHints: { notWebReady: true, bingeGroup: `toonitalia-${seriesName}` },
-                addonBaseUrl: providerContext?.addonBaseUrl
-            }, "ToonItalia"));
+            // Extract the actual video URL from VOE
+            const voeResults = await extractFromUrl(targetEpisode.voeUrl);
+            if (voeResults && voeResults.length > 0) {
+                for (const result of voeResults) {
+                    streamsToReturn.push(formatStream({
+                        name: "ToonItalia (VOE)",
+                        title: "VOE Stream",
+                        url: result.url,
+                        behaviorHints: {
+                            notWebReady: true,
+                            proxyHeaders: { request: result.headers || {} },
+                            bingeGroup: `toonitalia-${seriesName}`,
+                        },
+                        addonBaseUrl: providerContext?.addonBaseUrl
+                    }, "ToonItalia"));
+                }
+            } else {
+                // Fallback: return VOE page URL as external link
+                streamsToReturn.push(formatStream({
+                    name: "ToonItalia (VOE)",
+                    title: "VOE Stream - Requires Web Browser",
+                    url: targetEpisode.voeUrl,
+                    isExternal: true,
+                    behaviorHints: { notWebReady: true, bingeGroup: `toonitalia-${seriesName}` },
+                    addonBaseUrl: providerContext?.addonBaseUrl
+                }, "ToonItalia"));
+            }
         }
 
         return streamsToReturn.filter(Boolean);

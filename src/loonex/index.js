@@ -259,8 +259,13 @@ async function getStreams(id, type, season, episode, providerContext = null) {
       title: `Loonex - S${effectiveSeason} E${effectiveEpisode}`,
       type: "direct",
       url: m3u8,
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36',
+        'Origin': 'https://loonex.eu',
+        'Referer': 'https://loonex.eu/',
+      },
       behaviorHints: { notWebReady: true, bingeGroup: `loonex-${serie.normalizedTitle}` },
-      addonBaseUrl: providerContext?.addonBaseUrl
+      addonBaseUrl: providerContext?.addonBaseUrl,
     };
     return [formatStream(stream, "Loonex")].filter(Boolean);
   } catch (error) {

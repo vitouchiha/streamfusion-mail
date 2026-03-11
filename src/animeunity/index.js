@@ -306,15 +306,38 @@ async function fetchResource(url, options = {}) {
 
     if (method === "GET" && !body) {
       const referer = headers.referer || getUnityBaseUrl();
-      const htmlText = await fetchWithCloudscraper(url, {
-        retries: 2,
-        timeout: timeoutMs,
-        referer: referer
-      });
+      // Try direct fetch first (fast path, avoids cloudscraper overhead on non-CF-protected pages)
+      let htmlText = null;
+      try {
+        const directResp = await fetchWithTimeout(url, {
+          method: "GET",
+          headers: {
+            "user-agent": USER_AGENT,
+            "accept-language": "it-IT,it;q=0.9,en-US;q=0.8,en;q=0.7",
+            referer,
+          },
+          redirect: "follow",
+        }, Math.min(timeoutMs, 8000));
+        if (directResp.ok) {
+          const txt = await directResp.text();
+          if (!txt.includes("Just a moment") && !txt.includes("Cloudflare")) {
+            htmlText = txt;
+          }
+        }
+      } catch {
+        // fall through to cloudscraper
+      }
+      if (!htmlText) {
+        htmlText = await fetchWithCloudscraper(url, {
+          retries: 1,
+          timeout: timeoutMs,
+          referer,
+        });
+      }
       if (htmlText === null) {
         throw new Error(`HTTP 403/Cloudflare failure for ${url}`);
       }
-      
+
       payload = as === "json" ? JSON.parse(htmlText) : htmlText;
     } else {
       const response = await fetchWithTimeout(
@@ -918,6 +941,7 @@ async function extractStreamsFromAnimePath(animePath, requestedEpisode) {
   if (directUrl && /^https?:\/\//i.test(directUrl)) {
     const lowerLink = directUrl.toLowerCase();
     const isBlocked =
+      lowerLink.endsWith(".mkv") ||
       lowerLink.endsWith(".mkv.mp4") ||
       blockedDomains.some((domain) => lowerLink.includes(domain));
 
@@ -962,7 +986,7 @@ async function extractStreamsFromAnimePath(animePath, requestedEpisode) {
       });
       const embedUrl = toAbsoluteUrl(String(embedPayload || "").trim());
       if (embedUrl && /^https?:\/\//i.test(embedUrl)) {
-        const vixStreams = await extractVixCloud(embedUrl);
+        const vixStreams = await extractVixCloud(embedUrl, animeUrl);
         if (Array.isArray(vixStreams) && vixStreams.length > 0) {
           streams.push(
             ...vixStreams.map((stream) => ({

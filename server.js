@@ -27,7 +27,7 @@ const express  = require('express');
 const path = require('path');
 const manifest = require('./manifest.json');
 const { decodeConfig, isValidConfig, DEFAULT_CONFIG } = require('./src/utils/config');
-const { getProxyAgent, randomUA } = require('./src/utils/fetcher');
+const { getProxyAgent, makeProxyAgent, randomUA } = require('./src/utils/fetcher');
 const {
   HLS_PROXY_PATH,
   isLikelyHlsPlaylist,
@@ -200,8 +200,43 @@ app.get(HLS_PROXY_PATH, async (req, res) => {
   }
 
   try {
-    const proxyAgent = getProxyAgent();
-    const upstream = await axios.get(proxyTarget.url, {
+    // This is critical for CDN nodes (e.g. serversicuro.cc) that invalidate master.m3u8 tokens
+    // after the first browser fetch.
+    if (proxyTarget.cachedBody && isLikelyHlsPlaylist(proxyTarget.url, '')) {
+      try {
+        const rewritten = rewritePlaylist(
+          proxyTarget.cachedBody,
+          proxyTarget.url,
+          proxyTarget.headers,
+          addonBaseUrlFrom(req),
+          proxyTarget.expiresAt,
+          proxyTarget.proxyUrl
+        );
+        res.status(200);
+        res.setHeader('Cache-Control', 'no-store');
+        res.setHeader('Content-Type', 'application/vnd.apple.mpegurl');
+        return res.send(rewritten);
+      } catch (err) {
+        log.error(`hlsProxy cached body rewrite error: ${err.message}`);
+        // Fall through to normal upstream fetch
+      }
+    }
+
+    // Use per-stream proxy (from token) if available; else fall back to global PROXY_URL
+    const proxyAgent = proxyTarget.proxyUrl
+      ? makeProxyAgent(proxyTarget.proxyUrl)
+      : getProxyAgent();
+
+    // For serversicuro.cc: tokens are IP-locked to the CF Worker that extracted them.
+    // Route through the CF Worker proxy instead of wsProxy so the IP matches.
+    const cfProxyUrl = (process.env.CF_PROXY_URL || '').trim();
+    const usesCfProxy = cfProxyUrl && /serversicuro\.cc/i.test(proxyTarget.url);
+    const fetchUrl = usesCfProxy
+      ? `${cfProxyUrl}${cfProxyUrl.includes('?') ? '&' : '?'}url=${encodeURIComponent(proxyTarget.url)}`
+      : proxyTarget.url;
+    const fetchAgent = usesCfProxy ? null : proxyAgent;
+
+    const upstream = await axios.get(fetchUrl, {
       responseType: 'stream',
       timeout: Number(process.env.HLS_PROXY_TIMEOUT) || 20_000,
       headers: {
@@ -218,7 +253,7 @@ app.get(HLS_PROXY_PATH, async (req, res) => {
           : {}),
         'Accept-Encoding': 'identity',
       },
-      ...(proxyAgent ? { httpsAgent: proxyAgent, httpAgent: proxyAgent, proxy: false } : {}),
+      ...(fetchAgent ? { httpsAgent: fetchAgent, httpAgent: fetchAgent, proxy: false } : {}),
     });
 
     const contentType = String(upstream.headers['content-type'] || '');
@@ -254,7 +289,8 @@ app.get(HLS_PROXY_PATH, async (req, res) => {
           proxyTarget.url,
           proxyTarget.headers,
           addonBaseUrlFrom(req),
-          proxyTarget.expiresAt
+          proxyTarget.expiresAt,
+          proxyTarget.proxyUrl
         );
         res.status(upstream.status);
         res.setHeader('Cache-Control', 'no-store');
@@ -523,6 +559,7 @@ app.get('/debug/providers', requireDebugAuth, async (req, res) => {
 app.get('/debug/providers-stream', requireDebugAuth, async (req, res) => {
   const raw = String(req.query.id || req.query.imdb || 'tt0944947:1:1').trim();
   const type = String(req.query.type || 'series').toLowerCase() === 'movie' ? 'movie' : 'series';
+  const providerFilter = String(req.query.provider || '').trim().toLowerCase();
   const parts = raw.split(':');
   const imdbId = parts[0];
   const season = Number(parts[1] || 1);
@@ -668,8 +705,19 @@ app.get('/debug/providers-stream', requireDebugAuth, async (req, res) => {
     },
   ];
 
+  const selectedTests = providerFilter
+    ? tests.filter((t) => t.name.toLowerCase() === providerFilter)
+    : tests;
+
+  if (providerFilter && selectedTests.length === 0) {
+    return res.status(400).json({
+      error: `Unknown provider filter: ${providerFilter}`,
+      availableProviders: tests.map((t) => t.name),
+    });
+  }
+
   const results = [];
-  for (const t of tests) {
+  for (const t of selectedTests) {
     results.push(await withProbeTimeout(t.name, t.run));
   }
 
@@ -693,6 +741,7 @@ app.get('/debug/providers-stream', requireDebugAuth, async (req, res) => {
 
   res.json({
     input: { id: raw, imdbId, type, season, episode, timeoutMs },
+    providerFilter: providerFilter || null,
     titleResolution,
     summary,
     results,
@@ -842,6 +891,355 @@ app.get('/debug/browser', requireDebugAuth, async (req, res) => {
   }
 });
 
+app.get('/debug/browser-proxy', requireDebugAuth, async (req, res) => {
+  const { launchBrowser } = require('./src/utils/browser');
+  const raw = (process.env.WEBSHARE_PROXIES || '').trim();
+  const proxies = raw ? raw.split(',').map(s => s.trim()).filter(Boolean) : [];
+  const proxyUrl = proxies.length ? proxies[Math.floor(Math.random() * proxies.length)] : null;
+  const result = {
+    BROWSERLESS_URL_RAW: (process.env.BROWSERLESS_URL || '').slice(0, 80),
+    BROWSERLESS_URL_LEN: (process.env.BROWSERLESS_URL || '').length,
+    WEBSHARE_PROXIES_COUNT: proxies.length,
+    selectedProxy: proxyUrl ? proxyUrl.replace(/:[^:@]+@/, ':***@') : null,
+  };
+  const t0 = Date.now();
+  try {
+    const browser = await launchBrowser(proxyUrl ? { proxyUrl } : {});
+    result.connected = true;
+    result.connectMs = Date.now() - t0;
+    result.proxyAuth = !!browser._proxyAuth;
+    const page = await browser.newPage();
+    if (browser._proxyAuth) await page.authenticate(browser._proxyAuth);
+    await page.goto('https://api.ipify.org?format=json', { waitUntil: 'load', timeout: 15000 });
+    const ipText = await page.evaluate(() => document.body.innerText).catch(() => '?');
+    result.browserIp = ipText;
+    await browser.close();
+    result.totalMs = Date.now() - t0;
+    res.json(result);
+  } catch (err) {
+    result.connected = false;
+    result.error = err.message;
+    result.ms = Date.now() - t0;
+    res.json(result);
+  }
+});
+
+app.get('/debug/guardaserie-streams', requireDebugAuth, async (req, res) => {
+  const guardaserie = require('./src/guardaserie/index');
+  const imdbId = String(req.query.imdb || 'tt0460649').trim();
+  const season = Number(req.query.s || 7);
+  const episode = Number(req.query.e || 18);
+  const t0 = Date.now();
+  const logs = [];
+  const origStderrWrite = process.stderr.write.bind(process.stderr);
+  const origStdoutWrite = process.stdout.write.bind(process.stdout);
+  const intercept = (chunk) => {
+    const s = typeof chunk === 'string' ? chunk : chunk.toString();
+    if (/guardaserie|supervideo|browser|extractor/i.test(s)) {
+      try { logs.push(JSON.parse(s.trim())); } catch { logs.push({ raw: s.trim().substring(0, 300) }); }
+    }
+  };
+  process.stderr.write = (chunk, ...args) => { intercept(chunk); return origStderrWrite(chunk, ...args); };
+  process.stdout.write = (chunk, ...args) => { intercept(chunk); return origStdoutWrite(chunk, ...args); };
+  try {
+    const streams = await guardaserie.getStreams(imdbId, 'series', season, episode, {});
+    res.json({
+      count: streams.length,
+      streams: streams.map(s => ({
+        name: s.name,
+        title: s.title,
+        url: s.url ? s.url.substring(0, 150) : null,
+        quality: s.quality,
+        isExternal: s.isExternal,
+        behaviorHints: s.behaviorHints,
+      })),
+      ms: Date.now() - t0,
+      logs: logs.map(l => l.raw ? l : { ts: l.ts, msg: l.message, tag: l.tag }).slice(-60),
+    });
+  } catch (err) {
+    res.json({ error: err.message, stack: err.stack?.split('\n').slice(0, 5), ms: Date.now() - t0, logs: logs.slice(-60) });
+  } finally {
+    process.stderr.write = origStderrWrite;
+    process.stdout.write = origStdoutWrite;
+  }
+});
+
+app.get('/debug/browser-sv', requireDebugAuth, async (req, res) => {
+  const { launchBrowser } = require('./src/utils/browser');
+  const raw = (process.env.WEBSHARE_PROXIES || '').trim();
+  const proxies = raw ? raw.split(',').map(s => s.trim()).filter(Boolean) : [];
+  const proxyUrl = proxies.length ? proxies[Math.floor(Math.random() * proxies.length)] : null;
+  const embedUrl = String(req.query.url || 'https://supervideo.tv/e/914t0hxfcmcj').trim();
+  const t0 = Date.now();
+  const result = { proxy: proxyUrl ? proxyUrl.replace(/:[^:@]+@/, ':***@') : null };
+  let browser;
+  try {
+    browser = await launchBrowser(proxyUrl ? { proxyUrl } : {});
+    result.connected = true;
+    result.connectMs = Date.now() - t0;
+    const page = await browser.newPage();
+    if (browser._proxyAuth) await page.authenticate(browser._proxyAuth);
+    await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36');
+    let manifestUrl = null;
+    page.on('request', (r) => { if (!manifestUrl && /master\.m3u8/i.test(r.url())) manifestUrl = r.url(); });
+    await page.goto(embedUrl, { waitUntil: 'domcontentloaded', timeout: 15000 });
+    result.gotoMs = Date.now() - t0;
+    result.finalUrl = page.url();
+    result.manifestUrl = manifestUrl;
+    const html = await page.content().catch(() => '');
+    result.htmlLen = html.length;
+    result.hasJwplayer = /jwplayer/i.test(html);
+    result.hasCF = /cloudflare|just a moment/i.test(html);
+    result.title = (html.match(/<title>([^<]*)<\/title>/i) || [])[1] || null;
+    await page.close().catch(() => {});
+    result.totalMs = Date.now() - t0;
+    res.json(result);
+  } catch (err) {
+    result.error = err.message;
+    result.ms = Date.now() - t0;
+    res.json(result);
+  } finally {
+    if (browser) await browser.close().catch(() => {});
+  }
+});
+
+app.get('/debug/supervideo-extract', requireDebugAuth, async (req, res) => {
+  const { extractSuperVideo } = require('./src/extractors/supervideo');
+  const embedUrl = String(req.query.url || 'https://supervideo.tv/e/fipur2tfqif7').trim();
+  const t0 = Date.now();
+  const logs = [];
+  // Capture structured logger output (uses process.stderr.write in prod)
+  const origStderrWrite = process.stderr.write.bind(process.stderr);
+  const origStdoutWrite = process.stdout.write.bind(process.stdout);
+  process.stderr.write = (chunk, ...args) => {
+    const s = typeof chunk === 'string' ? chunk : chunk.toString();
+    if (s.includes('supervideo') || s.includes('browser')) {
+      try { logs.push(JSON.parse(s.trim())); } catch { logs.push({ raw: s.trim().substring(0, 200) }); }
+    }
+    return origStderrWrite(chunk, ...args);
+  };
+  process.stdout.write = (chunk, ...args) => {
+    const s = typeof chunk === 'string' ? chunk : chunk.toString();
+    if (s.includes('supervideo') || s.includes('browser')) {
+      try { logs.push(JSON.parse(s.trim())); } catch { logs.push({ raw: s.trim().substring(0, 200) }); }
+    }
+    return origStdoutWrite(chunk, ...args);
+  };
+  try {
+    const result = await extractSuperVideo(embedUrl, { refererBase: 'https://guardaserie.ceo/' });
+    res.json({
+      url: result?.url,
+      hasProxy: !!result?.proxyUrl,
+      proxy: result?.proxyUrl ? result.proxyUrl.replace(/:[^:@]+@/, ':***@') : null,
+      isExternal: !!result?.isExternal,
+      headers: result?.headers ? Object.keys(result.headers) : null,
+      ms: Date.now() - t0,
+      logs: logs.map(l => l.raw ? l : { ts: l.ts, msg: l.message, tag: l.tag, ...Object.fromEntries(Object.entries(l).filter(([k]) => !['ts','level','tag','message'].includes(k))) }).slice(-40),
+    });
+  } catch (err) {
+    res.json({ error: err.message, ms: Date.now() - t0, logs: logs.slice(-40) });
+  } finally {
+    process.stderr.write = origStderrWrite;
+    process.stdout.write = origStdoutWrite;
+  }
+});
+
+app.get('/debug/guardaserie-trace', requireDebugAuth, async (req, res) => {
+  const trace = [];
+  const t0 = Date.now();
+  const ts = () => Date.now() - t0;
+  try {
+    const { getProviderUrl } = require('./src/provider_urls');
+    const baseUrl = getProviderUrl('guardaserie');
+    trace.push({ step: 'baseUrl', value: baseUrl, ms: ts() });
+
+    const imdbId = String(req.query.imdb || 'tt0460649').trim();
+    const season = Number(req.query.s || 7);
+    const episode = Number(req.query.e || 18);
+    trace.push({ step: 'params', imdbId, season, episode, ms: ts() });
+
+    // Step 1: DLE search by IMDB ID (same as getStreams)
+    const params = new URLSearchParams();
+    params.append('do', 'search');
+    params.append('subaction', 'search');
+    params.append('story', imdbId);
+    const searchUrl = `${baseUrl}/index.php?${params.toString()}`;
+    trace.push({ step: 'searchUrl', url: searchUrl, ms: ts() });
+
+    const searchResp = await fetch(searchUrl, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Referer': baseUrl,
+      },
+      signal: AbortSignal.timeout(15000),
+    });
+    const searchHtml = await searchResp.text();
+    const hasMlnh2 = /mlnh-2/.test(searchHtml);
+    const hasCF = /cloudflare|just a moment/i.test(searchHtml);
+    const resultRegex = /<div class="mlnh-2">\s*<h2>\s*<a href="([^"]+)" title="([^"]+)">/i;
+    const match = resultRegex.exec(searchHtml);
+    trace.push({
+      step: 'dleSearch',
+      status: searchResp.status,
+      htmlLen: searchHtml.length,
+      hasMlnh2,
+      hasCF,
+      matchFound: !!match,
+      matchUrl: match ? match[1] : null,
+      matchTitle: match ? match[2] : null,
+      titleTag: (searchHtml.match(/<title>([^<]*)<\/title>/i) || [])[1] || null,
+      preview: searchHtml.substring(0, 300),
+      ms: ts(),
+    });
+
+    // Step 2: If match found, fetch the show page and look for episode links
+    if (match) {
+      let showPageUrl = match[1];
+      if (showPageUrl.startsWith('/')) showPageUrl = `${baseUrl}${showPageUrl}`;
+      const pageResp = await fetch(showPageUrl, {
+        headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36', Referer: baseUrl },
+        signal: AbortSignal.timeout(10000),
+      });
+      const pageHtml = await pageResp.text();
+      // Look for episode links
+      const dataLinks = [...pageHtml.matchAll(/data-link=["']([^"']+)["']/g)].map(m => m[1]);
+      const svLinks = dataLinks.filter(l => /supervideo/i.test(l));
+
+      // Test episode link extraction
+      const season = Number(req.query.s || 7);
+      const episode = Number(req.query.e || 18);
+      const episodeIds = [
+        `serie-${season}_${episode}`,
+        `serie-${season}_${String(episode).padStart(2, '0')}`,
+      ];
+      const hasEpId = episodeIds.map(id => pageHtml.includes(`id="${id}"`));
+      const dataNumStr = `${season}x${episode}`;
+      const dataNumPad = `${season}x${String(episode).padStart(2, '0')}`;
+      const hasDataNum = pageHtml.includes(`data-num="${dataNumStr}"`) || pageHtml.includes(`data-num="${dataNumPad}"`);
+      // Try actual extraction
+      const { getStreams } = require('./src/guardaserie/index');
+      let epLinks = [];
+      try {
+        const collectEpisodeLinks = require('./src/guardaserie/index').collectEpisodeLinks;
+        // Fall back: extract inline
+        for (const episodeId of episodeIds) {
+          const blockRegex = new RegExp(`<li[^>]*>[\\s\\S]*?<a[^>]+id="${episodeId}"[\\s\\S]*?<\\/li>`, "i");
+          const blockMatch = pageHtml.match(blockRegex);
+          if (blockMatch) {
+            for (const m of blockMatch[0].matchAll(/data-link="([^"]+)"/g)) {
+              epLinks.push(m[1]);
+            }
+            break;
+          }
+        }
+        if (!epLinks.length) {
+          const episodeRegex = new RegExp(`data-num="${dataNumStr}"|data-num="${dataNumPad}"`, "i");
+          const epMatch = episodeRegex.exec(pageHtml);
+          if (epMatch) {
+            const searchFrom = epMatch.index;
+            const mirrorsStart = pageHtml.indexOf('<div class="mirrors">', searchFrom);
+            if (mirrorsStart !== -1) {
+              const mirrorsEnd = pageHtml.indexOf("</div>", mirrorsStart);
+              if (mirrorsEnd !== -1) {
+                const mirHtml = pageHtml.substring(mirrorsStart, mirrorsEnd);
+                for (const m of mirHtml.matchAll(/data-link="([^"]+)"/g)) {
+                  epLinks.push(m[1]);
+                }
+              }
+            }
+          }
+        }
+      } catch (e) {}
+
+      trace.push({
+        step: 'showPage',
+        url: showPageUrl,
+        status: pageResp.status,
+        htmlLen: pageHtml.length,
+        dataLinkCount: dataLinks.length,
+        superVideoLinks: svLinks.length,
+        svSample: svLinks.slice(0, 3),
+        episodeIds,
+        hasEpId,
+        hasDataNum,
+        epLinks: epLinks.slice(0, 5),
+        ms: ts(),
+      });
+    }
+
+    res.json({ trace, ms: ts() });
+  } catch (err) {
+    trace.push({ step: 'error', message: err.message, ms: ts() });
+    res.json({ trace, ms: ts() });
+  }
+});
+
+app.get('/debug/http-fetch', requireDebugAuth, async (req, res) => {
+  const targetUrl = String(req.query.url || '').trim();
+  const referer = String(req.query.referer || '').trim();
+  const origin = String(req.query.origin || '').trim();
+  const userAgent = String(req.query.ua || '').trim() || 'Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36';
+  const timeoutMs = Math.max(1000, Number.parseInt(String(req.query.timeout || '15000'), 10) || 15000);
+
+  if (!/^https?:\/\//i.test(targetUrl)) {
+    return res.status(400).json({ error: 'Use a full http(s) URL in ?url=' });
+  }
+
+  const headers = { 'User-Agent': userAgent };
+  if (referer) headers.Referer = referer;
+  if (origin) headers.Origin = origin;
+
+  const timeoutConfig = createTimeoutSignal(timeoutMs);
+  const startedAt = Date.now();
+
+  try {
+    const response = await fetch(targetUrl, {
+      headers,
+      redirect: 'follow',
+      signal: timeoutConfig.signal,
+    });
+    const body = await response.text();
+    const dataLinkMatches = [...body.matchAll(/data-link=["']([^"']+)["']/g)].map((match) => match[1]);
+    const iframeMatches = [...body.matchAll(/<iframe[^>]+src=["']([^"']+)["']/gi)].map((match) => match[1]);
+
+    return res.json({
+      input: {
+        url: targetUrl,
+        referer: referer || null,
+        origin: origin || null,
+        userAgent,
+        timeoutMs,
+      },
+      status: response.status,
+      ok: response.ok,
+      finalUrl: response.url,
+      contentType: response.headers.get('content-type') || null,
+      ms: Date.now() - startedAt,
+      bodyLength: body.length,
+      bodyPreview: body.slice(0, 1200),
+      dataLinkCount: dataLinkMatches.length,
+      dataLinkSample: dataLinkMatches.slice(0, 10),
+      iframeCount: iframeMatches.length,
+      iframeSample: iframeMatches.slice(0, 10),
+      hasCloudflareBlock: /attention required|just a moment|cf-wrapper|cloudflare/i.test(body),
+    });
+  } catch (err) {
+    return res.status(500).json({
+      input: {
+        url: targetUrl,
+        referer: referer || null,
+        origin: origin || null,
+        userAgent,
+        timeoutMs,
+      },
+      error: String(err?.message || err),
+      ms: Date.now() - startedAt,
+    });
+  } finally {
+    if (typeof timeoutConfig.cleanup === 'function') timeoutConfig.cleanup();
+  }
+});
+
 app.get('/debug/drammatica', requireDebugAuth, async (req, res) => {
   // Drammatica.it is domain-parked (ParkLogic). This endpoint checks live status.
   const { fetchWithCloudscraper } = require('./src/utils/fetcher');
@@ -859,6 +1257,71 @@ app.get('/debug/drammatica', requireDebugAuth, async (req, res) => {
   } catch (err) {
     res.json({ url: base, alive: false, error: err.message, ms: Date.now()-t0 });
   }
+});
+
+// ─── Eurostreaming network diagnostics ───────────────────────────────────────
+
+app.get('/debug/eurostreaming', requireDebugAuth, async (req, res) => {
+  const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36';
+  const out = {};
+
+  // Test any URL
+  const testUrl = async (label, url, opts = {}) => {
+    const t = Date.now();
+    try {
+      const r = await fetch(url, {
+        headers: { 'User-Agent': UA, 'Accept': 'text/html,application/json,*/*' },
+        redirect: opts.nofollow ? 'manual' : 'follow',
+        signal: AbortSignal.timeout(opts.timeout || 7000),
+      });
+      const body = await r.text();
+      out[label] = {
+        status: r.status,
+        ok: r.ok,
+        blocked: body.includes('Just a moment') || body.includes('Checking your browser'),
+        len: body.length,
+        location: r.headers.get('location'),
+        ms: Date.now() - t,
+      };
+    } catch (e) {
+      out[label] = { error: e.message, ms: Date.now() - t };
+    }
+  };
+
+  // CF Worker helper
+  const cfWorkerUrl = (process.env.CF_WORKER_URL || '').trim();
+  const cfWorkerAuth = (process.env.CF_WORKER_AUTH || '').trim();
+  const testViaCF = async (label, targetUrl) => {
+    if (!cfWorkerUrl) { out[label] = { error: 'CF_WORKER_URL not set' }; return; }
+    const t = Date.now();
+    try {
+      const wUrl = new URL(cfWorkerUrl.replace(/\/$/, ''));
+      wUrl.searchParams.set('url', targetUrl);
+      const headers = { 'User-Agent': UA };
+      if (cfWorkerAuth) headers['x-worker-auth'] = cfWorkerAuth;
+      const r = await fetch(wUrl.toString(), { headers, signal: AbortSignal.timeout(12000) });
+      const body = await r.text();
+      out[label] = { status: r.status, ok: r.ok, blocked: body.includes('Just a moment'), len: body.length, bodyPreview: body.substring(0, 150), ms: Date.now() - t };
+    } catch (e) { out[label] = { error: e.message, ms: Date.now() - t }; }
+  };
+
+  // Run all tests in parallel
+  await Promise.all([
+    testUrl('eurostream_wp', 'https://eurostream.ing/wp-json/wp/v2/search?search=Scrubs&_fields=id,subtype&per_page=2'),
+    testUrl('clickaCC', 'https://clicka.cc/delta/039rfckolqwa', { nofollow: true }),
+    testUrl('safego', 'https://safego.cc/safe.php?url=YmZ2RlNqSHMwckM0YU1XdVpoQWMxSEJQeEEwM21WcGpvRkIrYWJvZ09kTllMLzBxN0wrU3U1NUVoWGVXblQ0Q0FrbTFJOGhlTWFmVGdyeThGSkR3UVE9PQ==', { nofollow: true }),
+    testUrl('deltabit', 'https://deltabit.co/'),
+    testUrl('guardaserie', 'https://guardaserietv.autos/'),
+    testUrl('guardoserie', 'https://guardoserie.surf/'),
+    testUrl('mostraguarda', 'https://mostraguarda.stream/'),
+    testUrl('guardaflix', 'https://guardaplay.space/'),
+    testUrl('cb01', 'https://cb01uno.digital/'),
+    testViaCF('eurostream_viaCF', 'https://eurostream.ing/wp-json/wp/v2/search?search=Scrubs&_fields=id,subtype&per_page=2'),
+    testViaCF('clickaCC_viaCF', 'https://clicka.cc/delta/039rfckolqwa'),
+    testViaCF('safego_viaCF', 'https://safego.cc/safe.php?url=YmZ2RlNqSHMwckM0YU1XdVpoQWMxSEJQeEEwM21WcGpvRkIrYWJvZ09kTllMLzBxN0wrU3U1NUVoWGVXblQ0Q0FrbTFJOGhlTWFmVGdyeThGSkR3UVE9PQ=='),
+  ]);
+
+  res.json(out);
 });
 
 // ─── Landing Page ─────────────────────────────────────────────────────────────

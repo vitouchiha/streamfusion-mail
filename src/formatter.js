@@ -36,7 +36,14 @@ function shouldSetNotWebReady(url, headers, behaviorHints = {}) {
     if (behaviorHints.notWebReady === false) return false;
     if (behaviorHints.notWebReady === true && !isMp4Url(url)) return true;
     if (isHlsProxyPlaybackUrl(url)) return false;
-    if (isMp4Url(url)) return false;
+    // MP4 URLs that require custom headers (e.g. Referer/Origin for MixDrop)
+    // MUST be notWebReady so Stremio applies proxyHeaders.
+    if (isMp4Url(url)) {
+        const proxyHeaders = behaviorHints.proxyHeaders && behaviorHints.proxyHeaders.request;
+        if (proxyHeaders && Object.keys(proxyHeaders).length > 0) return true;
+        if (headers && Object.keys(headers).length > 0) return true;
+        return false;
+    }
     const proxyHeaders = behaviorHints.proxyHeaders && behaviorHints.proxyHeaders.request;
     if (proxyHeaders && Object.keys(proxyHeaders).length > 0) return true;
     if (headers && Object.keys(headers).length > 0) return true;
@@ -62,6 +69,7 @@ function shouldProxyForWebPlayback(stream, url, headers, addonBaseUrl) {
     if (!addonBaseUrl) return false;
     if (isHlsProxyPlaybackUrl(url)) return false;
     if (stream.isExternal) return false; // Non proxare le pagine web esterne
+    if (stream.behaviorHints && stream.behaviorHints.proxyPlaybackDisabled) return false;
     return !isMp4Url(url);
 }
 
@@ -133,7 +141,7 @@ function formatStream(stream, providerName) {
     }
 
     if (shouldProxyForWebPlayback(stream, finalUrl, finalHeaders, addonBaseUrl)) {
-        const proxiedUrl = buildProxyUrl(addonBaseUrl, finalUrl, finalHeaders);
+        const proxiedUrl = buildProxyUrl(addonBaseUrl, finalUrl, finalHeaders, undefined, stream.proxyUrl, stream.manifestBody);
         if (proxiedUrl) {
             finalUrl = proxiedUrl;
             finalHeaders = null;
@@ -184,11 +192,16 @@ function formatStream(stream, providerName) {
     if (desc) finalTitle += `\n${desc}`;
 
     const responseStream = {
-        url: finalUrl,
         name: finalName,
         title: finalTitle,
         behaviorHints: behaviorHints,
     };
+
+    if (stream.isExternal) {
+        responseStream.externalUrl = finalUrl;
+    } else {
+        responseStream.url = finalUrl;
+    }
 
     if (stream.subtitles) {
         responseStream.subtitles = stream.subtitles;

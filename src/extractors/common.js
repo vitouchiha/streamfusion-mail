@@ -8,9 +8,10 @@ const PACKER_PATTERNS = [
 /**
  * Get a proxied URL if a Cloudflare Worker proxy is configured
  * @param {string} url The target URL
+ * @param {string} [referer] Optional Referer to pass to the proxy (for cross-origin embeds like VixCloud)
  * @returns {string} The proxied URL or original URL
  */
-function getProxiedUrl(url) {
+function getProxiedUrl(url, referer) {
   let proxyUrl = null;
   try {
     // Check global variable (set by stremio_addon.js)
@@ -25,7 +26,9 @@ function getProxiedUrl(url) {
   
   if (proxyUrl && url) {
     const separator = proxyUrl.includes('?') ? '&' : '?';
-    return `${proxyUrl}${separator}url=${encodeURIComponent(url)}`;
+    let result = `${proxyUrl}${separator}url=${encodeURIComponent(url)}`;
+    if (referer) result += `&referer=${encodeURIComponent(referer)}`;
+    return result;
   }
   return url;
 }

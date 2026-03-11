@@ -2,6 +2,7 @@ const {
   USER_AGENT,
   getRefererBase,
   normalizeExtractorUrl,
+  getProxiedUrl,
 } = require('./common');
 const { checkQualityFromPlaylist } = require('../quality_helper.js');
 const { fetchWithCloudscraper } = require('../utils/fetcher');
@@ -87,30 +88,58 @@ function buildPlaylistUrl(baseUrl, token, expires, canPlayFhd) {
   return finalUrl;
 }
 
-async function extractVixCloud(url) {
+async function extractVixCloud(url, pageReferer = null) {
   try {
     const embedUrl = normalizeExtractorUrl(url);
     if (!embedUrl) return [];
 
-    const referer = getRefererBase(embedUrl, 'https://vixcloud.co/');
+    // Use the embedding AnimeUnity page as referer (VixCloud expects the embedding site)
+    const embedReferer = pageReferer || 'https://www.animeunity.so/';
+    const selfReferer = getRefererBase(embedUrl, 'https://vixcloud.co/');
     let html = null;
-    const response = await fetch(embedUrl, {
-      headers: {
-        "User-Agent": USER_AGENT,
-        "Referer": referer
-      }
-    });
 
-    if (response.ok) {
-      html = await response.text();
+    // Try via CF Worker proxy first with AnimeUnity referer (simulates iframe from AnimeUnity)
+    const proxiedUrl = getProxiedUrl(embedUrl, embedReferer);
+    if (proxiedUrl !== embedUrl) {
+      try {
+        const response = await fetch(proxiedUrl, {
+          headers: { "User-Agent": USER_AGENT, "Referer": embedReferer }
+        });
+        if (response.ok) {
+          const text = await response.text();
+          if (!text.includes("Cloudflare") && !text.includes("Just a moment")) {
+            html = text;
+          }
+        }
+      } catch {
+        // fall through
+      }
     }
-    
-    if (!html || html.includes("Cloudflare") || response.status === 403) {
-      console.log(`[Extractors] VixCloud returned 403/Cloudflare, retrying with cloudscraper`);
+
+    // Direct fetch fallback
+    if (!html) {
+      try {
+        const response = await fetch(embedUrl, {
+          headers: { "User-Agent": USER_AGENT, "Referer": embedReferer }
+        });
+        if (response.ok) {
+          const text = await response.text();
+          if (!text.includes("Cloudflare") && !text.includes("Just a moment")) {
+            html = text;
+          }
+        }
+      } catch {
+        // fall through
+      }
+    }
+
+    // Cloudscraper as last resort
+    if (!html) {
+      console.log(`[Extractors] VixCloud proxy/direct failed, retrying with cloudscraper`);
       html = await fetchWithCloudscraper(embedUrl, {
         retries: 1,
         timeout: 12000,
-        referer: referer
+        referer: embedReferer
       });
     }
 
@@ -137,7 +166,7 @@ async function extractVixCloud(url) {
 
     const headers = {
       "User-Agent": USER_AGENT,
-      "Referer": referer
+      "Referer": selfReferer
     };
 
     let quality = "Auto";

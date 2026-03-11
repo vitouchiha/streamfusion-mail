@@ -7,6 +7,10 @@ const { extractUpstream } = require('./upstream');
 const { extractVidoza } = require('./vidoza');
 const { extractVixCloud } = require('./vixcloud');
 const { extractLoadm } = require('./loadm');
+const { extractMaxStream } = require('./maxstream');
+const { extractTurbovidda } = require('./turbovidda');
+const { extractVoe } = require('./voe');
+const { extractUprot } = require('./uprot');
 const { USER_AGENT, unPack } = require('./common');
 
 const EXTRACTOR_REGISTRY = [
@@ -54,6 +58,21 @@ const EXTRACTOR_REGISTRY = [
     name: 'Loadm',
     match: /loadm/i,
     run: (url, options = {}) => extractLoadm(url, options.loadmReferer || options.refererBase),
+  },
+  {
+    name: 'MaxStream',
+    match: /maxstream/i,
+    run: (url) => extractMaxStream(url),
+  },
+  {
+    name: 'Turbovidda',
+    match: /turbovid/i,
+    run: (url) => extractTurbovidda(url),
+  },
+  {
+    name: 'VOE',
+    match: /voe\.|chuckle-tube\.com/i,
+    run: (url) => extractVoe(url),
   },
 ];
 
@@ -104,6 +123,10 @@ module.exports = {
   extractVidoza,
   extractVixCloud,
   extractLoadm,
+  extractMaxStream,
+  extractTurbovidda,
+  extractVoe,
+  extractUprot,
   extractFromUrl,
   USER_AGENT,
   unPack

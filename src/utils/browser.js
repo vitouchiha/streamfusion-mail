@@ -1,5 +1,9 @@
 'use strict';
 
+const fs = require('fs');
+const os = require('os');
+const path = require('path');
+
 /**
  * Shared Puppeteer browser launcher — Vercel-compatible
  *
@@ -20,11 +24,8 @@
  *   await browser.close();
  */
 
-const puppeteerExtra = require('puppeteer-extra');
-const StealthPlugin  = require('puppeteer-extra-plugin-stealth');
+const puppeteerCore = require('puppeteer-core');
 const { createLogger } = require('./logger');
-
-puppeteerExtra.use(StealthPlugin());
 
 const log = createLogger('browser');
 
@@ -34,46 +35,101 @@ const IS_SERVERLESS = !!(
   process.env.NETLIFY
 );
 
+function getBrowserlessUrl() {
+  const raw = String(process.env.BROWSERLESS_URL || '').replace(/[\r\n]/g, '').trim();
+  if (!raw) return '';
+  return raw.replace(/^['"]+|['"]+$/g, '').replace(/\\r|\\n/g, '').trim();
+}
+
+/**
+ * Parse a proxy URL into its components.
+ * @param {string} proxyUrl  e.g. http://user:pass@host:port
+ * @returns {{ host: string, port: string, username: string, password: string } | null}
+ */
+function _parseProxyUrl(proxyUrl) {
+  if (!proxyUrl) return null;
+  try {
+    const parsed = new URL(proxyUrl);
+    if (!parsed.hostname || !parsed.port) return null;
+    return {
+      host: parsed.hostname,
+      port: parsed.port,
+      username: decodeURIComponent(parsed.username || ''),
+      password: decodeURIComponent(parsed.password || ''),
+    };
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Launch (or connect to) a Puppeteer browser instance.
  *
  * If BROWSERLESS_URL is set → connect to remote Chrome via WebSocket.
  * Otherwise → launch locally (for Docker / local dev).
  *
+ * @param {object} [options]
+ * @param {string} [options.proxyUrl]  HTTP proxy URL (http://user:pass@host:port)
+ *   When set, Chrome is launched with --proxy-server so all page requests go
+ *   through the proxy. The caller must call page.authenticate() with the
+ *   credentials returned in browser._proxyAuth.
  * @returns {Promise<import('puppeteer-core').Browser>}
  */
-async function launchBrowser() {
-  const browserlessUrl = (process.env.BROWSERLESS_URL || '').trim();
+async function launchBrowser(options = {}) {
+  const proxyInfo = _parseProxyUrl(options.proxyUrl);
+  const browserlessUrl = getBrowserlessUrl();
 
   // ── Option 1: Remote Chrome via Browserless.io (recommended for Vercel) ────
   if (browserlessUrl) {
-    log.info('connecting to remote Chrome via BROWSERLESS_URL');
+    log.info('connecting to remote Chrome via BROWSERLESS_URL', {
+      withProxy: !!proxyInfo,
+      urlLen: browserlessUrl.length,
+      urlHex: [...browserlessUrl].slice(-10).map(c => c.charCodeAt(0).toString(16)).join(','),
+    });
+    // Single attempt — retries waste 2s+ and consistently fail with same error
     try {
-      // Use puppeteer-core.connect() for Browserless.io.
-      // puppeteer-extra.connect() fails on Vercel due to missing stealth evasion sub-modules.
-      const puppeteerCore = require('puppeteer-core');
-      const browser = await puppeteerCore.connect({
-        browserWSEndpoint: browserlessUrl,
-        defaultViewport: { width: 1280, height: 720 },
-      });
+      let wsUrl = browserlessUrl;
+      if (proxyInfo) {
+        const sep = wsUrl.includes('?') ? '&' : '?';
+        wsUrl += `${sep}--proxy-server=http://${proxyInfo.host}:${proxyInfo.port}`;
+      }
+      log.warn('browserless connect', { wsUrlLen: wsUrl.length, hasProxy: !!proxyInfo, wsUrlEnd: wsUrl.slice(-50) });
+      const browser = await Promise.race([
+        puppeteerCore.connect({
+          browserWSEndpoint: wsUrl,
+          defaultViewport: { width: 1280, height: 720 },
+        }),
+        new Promise((_, reject) => setTimeout(() => reject(new Error('Browserless connect timeout (15s)')), 15_000)),
+      ]);
+      if (proxyInfo && proxyInfo.username) {
+        browser._proxyAuth = { username: proxyInfo.username, password: proxyInfo.password };
+      }
       log.debug('connected to remote Chrome');
       return browser;
     } catch (err) {
-      log.error(`remote Chrome connection failed: ${err.message}`);
-
-
-
-      throw err;
+      log.warn(`remote Chrome failed: ${err.message}, falling back to local Chromium`);
     }
   }
 
   // ── Option 2: Local launch (Docker / dev) ───────────────────────────────────
   const args = _baseArgs();
+  if (proxyInfo) {
+    args.push(`--proxy-server=http://${proxyInfo.host}:${proxyInfo.port}`);
+  }
   let executablePath;
 
   if (process.env.PUPPETEER_EXECUTABLE_PATH && process.env.PUPPETEER_EXECUTABLE_PATH.length > 1) {
     log.info('launching chromium from PUPPETEER_EXECUTABLE_PATH');
     executablePath = process.env.PUPPETEER_EXECUTABLE_PATH;
+  } else if (IS_SERVERLESS) {
+    try {
+      const chromium = require('@sparticuz/chromium');
+      log.info('launching chromium via @sparticuz/chromium');
+      executablePath = await chromium.executablePath();
+      args.push(...chromium.args);
+    } catch (err) {
+      log.warn(`@sparticuz/chromium unavailable: ${err.message}`);
+    }
   } else {
     log.info('launching chromium (local auto-detect)');
     executablePath = _detectLocalChrome();
@@ -87,13 +143,36 @@ async function launchBrowser() {
     ignoreHTTPSErrors: true,
   };
 
+  const userDataDir = _buildUserDataDir();
+  if (userDataDir) {
+    launchOpts.userDataDir = userDataDir;
+  }
+
   try {
-    const browser = await puppeteerExtra.launch(launchOpts);
+    const browser = await puppeteerCore.launch(launchOpts);
+    if (proxyInfo && proxyInfo.username) {
+      browser._proxyAuth = { username: proxyInfo.username, password: proxyInfo.password };
+    }
     log.debug('browser launched locally');
     return browser;
   } catch (err) {
     log.error(`browser launch failed: ${err.message}`);
     throw err;
+  }
+}
+
+function _buildUserDataDir() {
+  // On serverless runtimes /tmp can be tiny or exhausted; Chromium can still launch
+  // without forcing a dedicated profile dir, so only allocate one when it is safe.
+  if (IS_SERVERLESS) {
+    return undefined;
+  }
+
+  try {
+    return fs.mkdtempSync(path.join(os.tmpdir(), 'puppeteer_dev_profile-'));
+  } catch (err) {
+    log.warn(`could not allocate browser profile dir: ${err.message}`);
+    return undefined;
   }
 }
 

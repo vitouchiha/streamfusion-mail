@@ -51,7 +51,7 @@ function signTokenPayload(payload) {
     .digest('base64url');
 }
 
-function createProxyToken({ url, headers = {}, expiresAt } = {}) {
+function createProxyToken({ url, headers = {}, expiresAt, proxyUrl, cachedBody } = {}) {
   const normalizedUrl = String(url || '').trim();
   if (!isHttpUrl(normalizedUrl)) {
     throw new Error('Invalid proxy target URL');
@@ -61,10 +61,16 @@ function createProxyToken({ url, headers = {}, expiresAt } = {}) {
     ? Math.trunc(expiresAt)
     : Date.now() + DEFAULT_PROXY_TTL_MS;
 
+  // Only embed the body if it's a reasonable size (< 16KB) to keep the token URL manageable.
+  // Master manifests are typically 1-8KB; this avoids embedding large media playlists.
+  const body = cachedBody && String(cachedBody).length < 16384 ? String(cachedBody) : undefined;
+
   const payload = Buffer.from(JSON.stringify({
     u: new URL(normalizedUrl).toString(),
     h: sanitizeProxyHeaders(headers),
     e: exp,
+    ...(proxyUrl ? { p: String(proxyUrl) } : {}),
+    ...(body ? { b: body } : {}),
   })).toString('base64url');
 
   return `${payload}.${signTokenPayload(payload)}`;
@@ -106,16 +112,18 @@ function parseProxyToken(token) {
     url: new URL(String(data.u)).toString(),
     headers: sanitizeProxyHeaders(data.h),
     expiresAt,
+    proxyUrl: typeof data.p === 'string' ? data.p : undefined,
+    cachedBody: typeof data.b === 'string' ? data.b : undefined,
   };
 }
 
-function buildProxyUrl(baseUrl, targetUrl, headers = {}, expiresAt) {
+function buildProxyUrl(baseUrl, targetUrl, headers = {}, expiresAt, proxyUrl, cachedBody) {
   const normalizedBaseUrl = normalizeAddonBaseUrl(baseUrl);
   if (!normalizedBaseUrl || !isHttpUrl(targetUrl)) {
     return targetUrl;
   }
 
-  const token = createProxyToken({ url: targetUrl, headers, expiresAt });
+  const token = createProxyToken({ url: targetUrl, headers, expiresAt, proxyUrl, cachedBody });
   return `${normalizedBaseUrl}${HLS_PROXY_PATH}?token=${encodeURIComponent(token)}`;
 }
 
@@ -130,8 +138,8 @@ function rewriteTagUris(line, baseUrl, buildUrl) {
   });
 }
 
-function rewritePlaylist(playlistBody, playlistUrl, headers, addonBaseUrl, expiresAt) {
-  const buildUrl = (resolvedUrl) => buildProxyUrl(addonBaseUrl, resolvedUrl, headers, expiresAt);
+function rewritePlaylist(playlistBody, playlistUrl, headers, addonBaseUrl, expiresAt, proxyUrl) {
+  const buildUrl = (resolvedUrl) => buildProxyUrl(addonBaseUrl, resolvedUrl, headers, expiresAt, proxyUrl);
   return String(playlistBody || '')
     .split(/\r?\n/)
     .map((line) => {

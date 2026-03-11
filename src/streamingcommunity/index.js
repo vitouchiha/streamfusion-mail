@@ -36,7 +36,7 @@ function getPlaybackHeaders() {
   return sanitizeProxyHeaders(getCommonHeaders());
 }
 
-function buildPlaybackUrl(streamUrl, providerContext = null) {
+function buildPlaybackUrl(streamUrl, providerContext = null, cachedBody = undefined) {
   const playbackHeaders = getPlaybackHeaders();
   const addonBaseUrl = String(providerContext?.addonBaseUrl || '').trim();
   const mfpUrl = String(providerContext?.mfpUrl || '').trim();
@@ -51,7 +51,7 @@ function buildPlaybackUrl(streamUrl, providerContext = null) {
 
   if (addonBaseUrl) {
     return {
-      url: buildProxyUrl(addonBaseUrl, streamUrl, playbackHeaders),
+      url: buildProxyUrl(addonBaseUrl, streamUrl, playbackHeaders, undefined, undefined, cachedBody),
       headers: null,
       forceWebReady: true,
     };
@@ -209,12 +209,14 @@ async function getStreams(id, type, season, episode, providerContext = null) {
       console.log(`[StreamingCommunity] Found stream URL: ${streamUrl}`);
 
       let quality = "720p";
+      let cachedPlaylistBody = undefined;
       try {
         const playlistResponse = await fetch(streamUrl, {
           headers: commonHeaders
         });
         if (playlistResponse.ok) {
           const playlistText = await playlistResponse.text();
+          cachedPlaylistBody = playlistText;
           // Basic quality detection from playlist content
           // We specifically look for Italian audio, not subtitles (TYPE=AUDIO)
           const hasItalian = /#EXT-X-MEDIA:TYPE=AUDIO.*(?:LANGUAGE="it"|LANGUAGE="ita"|NAME="Italian"|NAME="Ita")/i.test(playlistText);
@@ -228,8 +230,8 @@ async function getStreams(id, type, season, episode, providerContext = null) {
           if (hasItalian || originalLanguageItalian) {
             console.log(`[StreamingCommunity] Verified: Has Italian audio or original language is Italian.`);
           } else {
-            console.log(`[StreamingCommunity] No Italian audio found in playlist and original language is not Italian. Skipping.`);
-            return [];
+            console.log(`[StreamingCommunity] No Italian audio found but bypassing for Asian Drama sub support.`);
+            // DO NOT return []; here so we allow fallback streams
           }
         } else {
           console.warn(`[StreamingCommunity] Playlist check failed (${playlistResponse.status}), skipping verification.`);
@@ -239,7 +241,7 @@ async function getStreams(id, type, season, episode, providerContext = null) {
       }
 
       const normalizedQuality = getQualityFromName(quality);
-      const playback = buildPlaybackUrl(streamUrl, providerContext);
+      const playback = buildPlaybackUrl(streamUrl, providerContext, cachedPlaylistBody);
       const result = {
         name: `StreamingCommunity`,
         title: finalDisplayName,

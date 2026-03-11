@@ -1,3 +1,10 @@
+## [3.0.22] - 2026-03-10
+
+### Fixed
+- **Guardaserie inline playback in Stremio** - Quando esiste un flusso HLS diretto valido, l'addon ora elimina i fallback `Web Browser` e passa i link SuperVideo header-protected attraverso il proxy HLS interno, così Stremio riproduce dentro l'app invece di aprire la pagina esterna.
+
+---
+
 ## [3.0.19] - 2026-03-09
 - Feat: Aggiunto formatter globale con tema Cane per tutti i provider.
 
