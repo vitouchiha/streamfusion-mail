@@ -578,6 +578,13 @@ app.get('/debug-title/:imdbId', async (req, res) => {
       const surfTxt = await surfResp.text();
       trace.push({ step: 'surf_get_test', status: surfResp.status, len: surfTxt.length, hasEpisode: surfTxt.includes('episodio'), snippet: surfTxt.substring(0, 80) });
     } catch (e) { trace.push({ step: 'direct_get_test', error: e.message?.substring(0, 200) }); }
+    // Test got-scraping (TLS fingerprint bypass)
+    try {
+      const { gotScraping } = await import('got-scraping');
+      const gsUrl4 = getProviderUrl('guardoserie');
+      const gsResp = await gotScraping({ url: `${gsUrl4}/serie/scrubs/`, timeout: { request: 15000 } });
+      trace.push({ step: 'gotscraping_test', status: gsResp.statusCode, len: gsResp.body.length, hasEpisode: gsResp.body.includes('episodio'), cf: gsResp.body.includes('Just a moment') });
+    } catch (e) { trace.push({ step: 'gotscraping_test', error: e.message?.substring(0, 200) }); }
     // Direct guardoserie test
     try {
       const guardoserie = require('./src/guardoserie/index');
