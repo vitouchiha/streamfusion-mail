@@ -1497,7 +1497,7 @@ function buildPage(host, config) {
 <body>
   <div class="container">
     <div class="header">
-      <h1>Nellostream <span class="badge">v${v}</span></h1>
+      <h1>Nello Stream <span class="badge">v${v}</span></h1>
       <p class="lead">Il motore di aggregazione definitivo ispirato a Nello 🐶 per contenuti in streaming su Stremio.</p>
     </div>
 
@@ -1527,7 +1527,7 @@ function buildPage(host, config) {
         <div class="hint">La compatibilità con IMDb/Cinemeta è sempre attiva di default. Il link generato usa un path di release versionato (${installReleaseTag}) per forzare il refresh del manifest in Stremio.</div>
       </div>
 
-      <button type="submit" class="btn-submit">Ottieni Addon Nellostream</button>
+      <button type="submit" class="btn-submit">Ottieni Addon Nello Stream</button>
     </form>
 
     <div id="res" class="result">

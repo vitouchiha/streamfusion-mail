@@ -1,7 +1,7 @@
 {
   "id": "org.nello.drama",
   "version": "3.0.22",
-  "name": "NelloStream",
+  "name": "Nello Stream",
   "description": "Il motore di aggregazione definitivo ispirato a Nello 🐶 per i Drama in streaming su Stremio con sub ITA.",
   "logo": "https://streamfusion-mail.vercel.app/public/nellostream_logo.svg",
   "background": "https://streamfusion-mail.vercel.app/public/nello_bg.png?v=2",
