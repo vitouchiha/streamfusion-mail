@@ -79,6 +79,7 @@ export default {
       'eurostream.ing', 'www.eurostream.ing',
       'clicka.cc', 'www.clicka.cc',
       'safego.cc', 'www.safego.cc',
+      'guardoserie.digital', 'www.guardoserie.digital',
     ]);
     if (!ALLOWED_HOSTS.has(parsedTarget.hostname)) {
       return _json({ error: `Host ${parsedTarget.hostname} is not proxied by this Worker` }, 403);
@@ -106,16 +107,20 @@ export default {
                     isSafego ? 'https://safego.cc' : parsedTarget.origin;
 
     const isEpisodeApi = parsedTarget.pathname.includes('/DramaList/Episode/');
+    const isGuardoserie = parsedTarget.hostname.includes('guardoserie');
     const cookie = url.searchParams.get('cookie') || '';
 
     const headers = {
       'User-Agent':      'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
-      'Accept':          isEurostream ? 'application/json, text/html, */*' : 'application/json, text/plain, */*',
+      'Accept':          isEurostream ? 'application/json, text/html, */*' : isGuardoserie ? 'text/html, */*' : 'application/json, text/plain, */*',
       'Accept-Language': 'it-IT,it;q=0.9,en-US;q=0.8,en;q=0.7',
       'Referer':         referer,
       'Origin':          origin,
     };
     if (cookie) headers['Cookie'] = cookie;
+    // Custom Content-Type for POST requests (e.g. guardoserie WP AJAX)
+    const contentType = url.searchParams.get('contentType');
+    if (contentType) headers['Content-Type'] = contentType;
 
     // Episode API and XHR-mode requests need X-Requested-With
     if (isXhr || isEpisodeApi) {

@@ -12,6 +12,38 @@ function getMappingApiUrl() {
     return getProviderUrl('mapping_api').replace(/\/+$/, "");
 }
 
+// ── CF Worker proxy helper ─────────────────────────────────────────────────
+function _getCfWorkerUrl() {
+    return (process.env.CF_WORKER_URL || '').trim() || null;
+}
+function _getCfWorkerAuth() {
+    return (process.env.CF_WORKER_AUTH || '').trim() || '';
+}
+/**
+ * Fetch a URL through the CF worker proxy (bypasses datacenter IP blocks).
+ * Falls back to direct fetch when CF_WORKER_URL is not configured.
+ */
+async function proxyFetch(url, opts = {}) {
+    const workerBase = _getCfWorkerUrl();
+    if (!workerBase) return fetch(url, opts);
+
+    const params = new URLSearchParams();
+    params.set('url', url);
+    if (opts.method === 'POST') {
+        params.set('method', 'POST');
+        if (opts.body) params.set('body', typeof opts.body === 'string' ? opts.body : '');
+        const ct = opts.headers?.['Content-Type'] || opts.headers?.['content-type'];
+        if (ct) params.set('contentType', ct);
+    }
+    const auth = _getCfWorkerAuth();
+    const headers = {};
+    if (auth) headers['x-worker-auth'] = auth;
+
+    const proxyUrl = `${workerBase.replace(/\/$/, '')}/?${params.toString()}`;
+    return fetch(proxyUrl, { headers, signal: opts.signal });
+}
+// ────────────────────────────────────────────────────────────────────────────
+
 async function getIdsFromKitsu(kitsuId, season, episode) {
     try {
         if (!kitsuId) return null;
@@ -302,7 +334,7 @@ async function getStreams(id, type, season, episode, providerContext = null) {
             const searchUrl = `${getGuardoserieBaseUrl()}/wp-admin/admin-ajax.php`;
             const body = `s=${encodeURIComponent(query)}&action=searchwp_live_search&swpengine=default&swpquery=${encodeURIComponent(query)}`;
 
-            const response = await fetch(searchUrl, {
+            const response = await proxyFetch(searchUrl, {
                 method: 'POST',
                 headers: {
                     'User-Agent': USER_AGENT,
@@ -391,7 +423,7 @@ async function getStreams(id, type, season, episode, providerContext = null) {
             if (isExactMatch || isPartialMatch) {
                 // Verify year in the page
                 try {
-                    const pageRes = await fetch(result.url, { headers: { 
+                    const pageRes = await proxyFetch(result.url, { headers: { 
                         'User-Agent': USER_AGENT,
                         'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
                         'Accept-Language': 'it-IT,it;q=0.9,en-US;q=0.8,en;q=0.7',
@@ -460,7 +492,7 @@ async function getStreams(id, type, season, episode, providerContext = null) {
         if (type === 'tv' || type === 'series') {
             season = effectiveSeason;
             episode = effectiveEpisode;
-            const pageRes = await fetch(targetUrl, { headers: { 
+            const pageRes = await proxyFetch(targetUrl, { headers: { 
                 'User-Agent': USER_AGENT,
                 'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
                 'Accept-Language': 'it-IT,it;q=0.9,en-US;q=0.8,en;q=0.7',
@@ -477,7 +509,7 @@ async function getStreams(id, type, season, episode, providerContext = null) {
         }
 
         console.log(`[Guardoserie] Found episode/movie URL: ${episodeUrl}`);
-        const finalRes = await fetch(episodeUrl, { headers: { 
+        const finalRes = await proxyFetch(episodeUrl, { headers: { 
             'User-Agent': USER_AGENT,
             'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
             'Accept-Language': 'it-IT,it;q=0.9,en-US;q=0.8,en;q=0.7',
@@ -492,7 +524,7 @@ async function getStreams(id, type, season, episode, providerContext = null) {
             const fallbackEpisodeUrl = extractEpisodeUrlFromSeriesPage(finalHtml, season, episode);
             if (fallbackEpisodeUrl && fallbackEpisodeUrl !== episodeUrl) {
                 console.log(`[Guardoserie] Fallback to derived episode URL: ${fallbackEpisodeUrl}`);
-                const retryRes = await fetch(fallbackEpisodeUrl, { headers: {
+                const retryRes = await proxyFetch(fallbackEpisodeUrl, { headers: {
                     'User-Agent': USER_AGENT,
                     'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
                     'Accept-Language': 'it-IT,it;q=0.9,en-US;q=0.8,en;q=0.7',
