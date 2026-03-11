@@ -484,6 +484,29 @@ async function getStreams(id, type, season, episode, providerContext = null) {
         }
 
         if (!targetUrl) {
+            // Fallback: try direct URL when search is blocked (e.g. Cloudflare challenge from datacenter IPs).
+            // Guardoserie uses the slug pattern: /serie/{slug}/
+            for (const q of queries) {
+                const slug = q.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+                if (!slug) continue;
+                const directUrl = `${getGuardoserieBaseUrl()}/serie/${slug}/`;
+                try {
+                    const directRes = await proxyFetch(directUrl, { headers: {
+                        'User-Agent': USER_AGENT,
+                        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+                        'Accept-Language': 'it-IT,it;q=0.9,en-US;q=0.8,en;q=0.7',
+                        'Referer': `${getGuardoserieBaseUrl()}/`
+                    } });
+                    if (directRes.ok) {
+                        targetUrl = directUrl;
+                        console.log(`[Guardoserie] Direct URL fallback matched: ${directUrl}`);
+                        break;
+                    }
+                } catch { /* direct URL not found */ }
+            }
+        }
+
+        if (!targetUrl) {
             console.log(`[Guardoserie] No matching result found for ${title}`);
             return [];
         }
