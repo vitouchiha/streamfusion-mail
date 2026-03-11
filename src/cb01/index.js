@@ -12,6 +12,7 @@ const { getProviderUrl } = require('../provider_urls.js');
 const { extractMixDrop } = require('../extractors/mixdrop');
 const { extractMaxStream } = require('../extractors/maxstream');
 const { extractUprot } = require('../extractors/uprot');
+const { fetchWithCloudscraper } = require('../utils/fetcher');
 
 const TMDB_API_KEY = '68e094699525b18a70bab2f86b1fa706';
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36';
@@ -111,12 +112,8 @@ async function searchMovie(showname, year) {
   try {
     const base = getCb01BaseUrl();
     const query = normalizeForSearch(showname);
-    const resp = await fetch(`${base}/?s=${query}`, {
-      headers: { 'User-Agent': UA, 'Referer': `${base}/` },
-      redirect: 'follow',
-    });
-    if (!resp.ok) return null;
-    const html = await resp.text();
+    const html = await fetchWithCloudscraper(`${base}/?s=${query}`, { referer: `${base}/` });
+    if (!html) return null;
     const yearPattern = /(19|20)\d{2}/;
 
     // Each result card: <div class="card-content"> ... <h3 class="card-title"><a href="...">
@@ -141,12 +138,8 @@ async function searchSeries(showname, year) {
   try {
     const base = getCb01BaseUrl();
     const query = normalizeForSearch(showname);
-    const resp = await fetch(`${base}/serietv/?s=${query}`, {
-      headers: { 'User-Agent': UA, 'Referer': `${base}/serietv/` },
-      redirect: 'follow',
-    });
-    if (!resp.ok) return null;
-    const html = await resp.text();
+    const html = await fetchWithCloudscraper(`${base}/serietv/?s=${query}`, { referer: `${base}/serietv/` });
+    if (!html) return null;
     const yearPattern = /(19|20)\d{2}/;
 
     const cardRe = /<div[^>]+class="card-content"([\s\S]*?)<\/div>/gi;
@@ -214,12 +207,8 @@ async function extractFromResolvedUrl(resolvedUrl, label) {
 async function extractMovieStreams(pageUrl) {
   const streams = [];
   try {
-    const resp = await fetch(pageUrl, {
-      headers: { 'User-Agent': UA, 'Referer': getCb01BaseUrl() + '/' },
-      redirect: 'follow',
-    });
-    if (!resp.ok) return streams;
-    const html = await resp.text();
+    const html = await fetchWithCloudscraper(pageUrl, { referer: getCb01BaseUrl() + '/' });
+    if (!html) return streams;
 
     // Collect all iframen divs with data-src (works for iframen1, iframen2, etc.)
     const iframeRe = /<div[^>]+id="(iframen\d+)"[^>]+data-src="([^"]+)"|<div[^>]+data-src="([^"]+)"[^>]+id="(iframen\d+)"/gi;
@@ -293,12 +282,8 @@ async function extractEpisodeStreams(link) {
 async function extractSeriesStreams(pageUrl, season, episode) {
   const streams = [];
   try {
-    const resp = await fetch(pageUrl, {
-      headers: { 'User-Agent': UA, 'Referer': getCb01BaseUrl() + '/' },
-      redirect: 'follow',
-    });
-    if (!resp.ok) return streams;
-    const html = await resp.text();
+    const html = await fetchWithCloudscraper(pageUrl, { referer: getCb01BaseUrl() + '/' });
+    if (!html) return streams;
 
     const seasonStr = String(season);
     const episodePadded = String(episode).padStart(2, '0');
@@ -354,12 +339,8 @@ async function extractSeriesStreams(pageUrl, season, episode) {
       const hrefInHead = /href="([^"]+)"/.exec(headMatch[0]);
       if (hrefInHead) {
         try {
-          const subResp = await fetch(hrefInHead[1], {
-            headers: { 'User-Agent': UA, 'Referer': pageUrl },
-            redirect: 'follow',
-          });
-          if (subResp.ok) {
-            const subHtml = await subResp.text();
+          const subHtml = await fetchWithCloudscraper(hrefInHead[1], { referer: pageUrl });
+          if (subHtml) {
             const epPatterns = [
               new RegExp(`(?:S${epStr.padStart(2, '0')}|${seasonStr}x)${epStr}[\\s\\S]*?href='([^']+)'`, 'i'),
               new RegExp(`${seasonStr}&#215;${epStr}[\\s\\S]*?href='([^']+)'`, 'i'),
