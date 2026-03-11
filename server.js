@@ -518,6 +518,7 @@ app.get('/debug-title/:imdbId', async (req, res) => {
     const { findTitleByImdbId } = require('./src/utils/tmdb');
     const { getProviderUrl } = require('./src/provider_urls');
     trace.push({ step: 'guardoserie_url', value: getProviderUrl('guardoserie') });
+    trace.push({ step: 'cf_worker', url: (process.env.CF_WORKER_URL || '(not set)').substring(0, 30), auth: !!(process.env.CF_WORKER_AUTH || '').trim() });
     // Cinemeta
     try {
       const cResp = await axios.get(`https://v3-cinemeta.strem.io/meta/series/${imdbId}.json`, { timeout: 5000 });
