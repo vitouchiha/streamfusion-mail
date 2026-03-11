@@ -308,8 +308,8 @@ async function _fetchFromImdbId(rawId, type, config) {
     'eurostreaming',
   ]);
 
-  const useKisskh = _isProviderEnabled(config, 'kisskh') && (!useEasystreams || hasExplicitProviderSelection);
-  const useRama = _isProviderEnabled(config, 'rama') && (!useEasystreams || hasExplicitProviderSelection);
+  const useKisskh = _isProviderEnabled(config, 'kisskh');
+  const useRama = _isProviderEnabled(config, 'rama');
 
   const jobs = [];
   const imdbJobTimeout = Math.max(1_000, Number(config?.imdbJobTimeout) || IMDB_PROVIDER_TIMEOUT);
