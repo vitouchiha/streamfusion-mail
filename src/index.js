@@ -296,7 +296,7 @@ async function getStreams(id, type, season, episode, config = {}) {
             selectedProviders.push('animeunity', 'animeworld', 'animesaturn', 'toonitalia', 'loonex', 'guardaserie', 'guardoserie', 'streamingcommunity');
         } else {
             if (isImdbRequest) {
-                selectedProviders.push('streamingcommunity', 'guardaserie', 'eurostreaming', 'cb01', 'toonitalia', 'loonex');
+                selectedProviders.push('streamingcommunity', 'guardaserie', 'guardoserie', 'eurostreaming', 'cb01', 'toonitalia', 'loonex');
             } else {
                 selectedProviders.push('streamingcommunity', 'guardaserie', 'guardoserie', 'animeunity', 'animeworld', 'animesaturn', 'toonitalia', 'loonex', 'eurostreaming', 'cb01');
             }
