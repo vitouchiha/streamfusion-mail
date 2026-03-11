@@ -533,9 +533,28 @@ app.get('/debug-title/:imdbId', async (req, res) => {
     // Direct guardoserie test
     try {
       const guardoserie = require('./src/guardoserie/index');
+      const { getProviderUrl } = require('./src/provider_urls');
+      const gsUrl = getProviderUrl('guardoserie');
+      // Test TMDB lookup
+      let tmdbTitle = null;
+      try {
+        const tmdbResp = await axios.get(`https://api.themoviedb.org/3/find/${imdbId}?api_key=68e094699525b18a70bab2f86b1fa706&external_source=imdb_id`, { timeout: 5000 });
+        const tvRes = tmdbResp.data?.tv_results?.[0];
+        tmdbTitle = tvRes?.name || null;
+        trace.push({ step: 'guardoserie_tmdb', title: tmdbTitle, tmdbId: tvRes?.id });
+      } catch (e) { trace.push({ step: 'guardoserie_tmdb', error: e.message }); }
+      // Test WP search
+      try {
+        const searchResp = await axios.post(`${gsUrl}/wp-admin/admin-ajax.php`, 
+          `s=scrubs&action=searchwp_live_search&swpengine=default&swpquery=scrubs`,
+          { timeout: 10000, headers: { 'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8', 'Origin': gsUrl, 'Referer': `${gsUrl}/` } }
+        );
+        trace.push({ step: 'guardoserie_search', status: searchResp.status, len: searchResp.data?.length, snippet: String(searchResp.data).substring(0, 200) });
+      } catch (e) { trace.push({ step: 'guardoserie_search', error: e.message }); }
+      // Full getStreams
       const gs = await guardoserie.getStreams(imdbId, 'series', 1, 1, { imdbId });
       trace.push({ step: 'guardoserie_direct', streams: gs.length, first: gs[0]?.name || null });
-    } catch (e) { trace.push({ step: 'guardoserie_direct', error: e.message }); }
+    } catch (e) { trace.push({ step: 'guardoserie_direct', error: e.message, stack: e.stack?.substring(0,300) }); }
     // Easystreams test
     try {
       const easystreams = require('./src/index');
