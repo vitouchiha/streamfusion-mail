@@ -48,12 +48,14 @@ app.use('/public', express.static(path.join(__dirname, 'public')));
 
 
 let _providersApi = null;
+let _providersBootstrapError = null;
 function getProvidersApi() {
   if (_providersApi) return _providersApi;
   try {
     _providersApi = require('./src/providers/index');
     return _providersApi;
   } catch (err) {
+    _providersBootstrapError = err.stack || err.message;
     log.error('providers bootstrap failed: ' + err.stack);
     return null;
   }
@@ -507,7 +509,7 @@ app.get([
 // ─── Health ───────────────────────────────────────────────────────────────────
 
 app.get('/health', (req, res) => {
-  res.json({ status: 'ok', version: manifest.version, ts: new Date().toISOString() });
+  res.json({ status: 'ok', version: manifest.version, ts: new Date().toISOString(), providersLoaded: !!_providersApi, bootstrapError: _providersBootstrapError });
 });
 
 app.get('/api/status', (req, res) => {
