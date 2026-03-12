@@ -7,7 +7,7 @@
       "use": "@vercel/node",
       "config": {
         "maxDuration": 60,
-        "includeFiles": "node_modules/puppeteer-extra-plugin-stealth/evasions/**/*"
+        "includeFiles": "node_modules/puppeteer-extra*/**/*"
       }
     }
   ],
