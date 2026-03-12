@@ -127,10 +127,17 @@ function formatStream(stream, providerName) {
     const lang  = stream.language || '';
     const sName = String(stream.name  || '').toLowerCase();
     const sTitle = String(stream.title || '').toLowerCase();
-    let langFlag = '🇮🇹 ITA';
-    if (lang.includes('SUB') || sName.includes('sub ita') ||
-        sTitle.includes('sub ita') || sTitle.includes('sub'))
+    let langFlag;
+    if (lang.includes('🇯🇵')) {
+        langFlag = '🇯🇵 SUB ITA';
+    } else if (lang.includes('🇰🇷')) {
         langFlag = '🇰🇷 SUB ITA';
+    } else if (lang.includes('SUB') || sName.includes('sub ita') ||
+        sTitle.includes('sub ita') || sTitle.includes('sub')) {
+        langFlag = '🇯🇵 SUB ITA';
+    } else {
+        langFlag = '🇮🇹 ITA';
+    }
 
     // ─── Provider identity ──────────────────────────────────────────────
     const pKey = String(providerName || '').toLowerCase().replace(/[^a-z0-9]/g, '');
