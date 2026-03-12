@@ -30,20 +30,23 @@ async function extractMixDrop(url, refererBase = 'https://m1xdrop.net/', provide
     if (!url) return null;
 
     // Try MFP extractor first (handles new MixDrop obfuscation)
+    // Use the extractor URL directly as the stream URL so MFP extracts AND
+    // proxies from the same IP — MixDrop MP4 tokens are IP-locked.
     const mfpConfig = providerContext || {};
     if (mfpConfig.mfpUrl) {
-      const mfpUrl = await extractViaMfp(url, 'Mixdrop', mfpConfig, false);
-      if (mfpUrl) {
-        const origin = getUrlOrigin(url) || 'https://m1xdrop.net';
-        return {
-          url: mfpUrl,
-          headers: {
-            'User-Agent': USER_AGENT,
-            'Referer': `${origin}/`,
-            'Origin': origin
-          }
-        };
-      }
+      const base = mfpConfig.mfpUrl.replace(/\/$/, '');
+      const params = new URLSearchParams({
+        host: 'Mixdrop',
+        d: url,
+        redirect_stream: 'true',
+      });
+      if (mfpConfig.mfpKey) params.set('api_password', mfpConfig.mfpKey);
+      const extractorUrl = `${base}/extractor/video?${params}`;
+      return {
+        url: extractorUrl,
+        headers: null,
+        mfpHandled: true,
+      };
     }
 
     // Fallback: local p.a.c.k.e.r extraction (old MixDrop format)

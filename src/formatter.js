@@ -70,6 +70,7 @@ function shouldProxyForWebPlayback(stream, url, headers, addonBaseUrl) {
     if (isHlsProxyPlaybackUrl(url)) return false;
     if (stream.isExternal) return false; // Non proxare le pagine web esterne
     if (stream.behaviorHints && stream.behaviorHints.proxyPlaybackDisabled) return false;
+    if (stream.mfpHandled) return false; // Already handled by MediaFlow Proxy
     return !isMp4Url(url);
 }
 
@@ -227,6 +228,9 @@ function formatStream(stream, providerName) {
     }
 
     behaviorHints.notWebReady = shouldSetNotWebReady(finalUrl, finalHeaders, behaviorHints);
+
+    // MFP extractor URLs are fully proxied — always web-ready
+    if (stream.mfpHandled) behaviorHints.notWebReady = false;
 
     const out = {
         name: finalName,

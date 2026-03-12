@@ -174,7 +174,7 @@ async function searchSeries(showname, year) {
  * Returns a stream object or null.
  */
 async function extractFromResolvedUrl(resolvedUrl, displayTitle, providerContext = null) {
-  function makeCb01Stream(playerName, url, headers) {
+  function makeCb01Stream(playerName, url, headers, extraFlags = {}) {
     const raw = {
       name: `CB01 - ${playerName}`,
       title: displayTitle || 'CB01',
@@ -182,6 +182,7 @@ async function extractFromResolvedUrl(resolvedUrl, displayTitle, providerContext
       quality: '1080p',
       type: 'direct',
       addonBaseUrl: providerContext?.addonBaseUrl,
+      ...extraFlags,
     };
     if (headers) raw.behaviorHints = { notWebReady: true, proxyHeaders: { request: headers } };
     return formatStream(raw, 'CB01');
@@ -190,7 +191,7 @@ async function extractFromResolvedUrl(resolvedUrl, displayTitle, providerContext
     const host = new URL(resolvedUrl).hostname.toLowerCase();
     if (host.includes('mixdrop') || host.includes('m1xdrop')) {
       const result = await extractMixDrop(resolvedUrl, undefined, providerContext);
-      if (result) return makeCb01Stream('MixDrop', result.url, result.headers);
+      if (result) return makeCb01Stream('MixDrop', result.url, result.headers, result.mfpHandled ? { mfpHandled: true } : {});
     } else if (host.includes('maxstream')) {
       const result = await extractMaxStream(resolvedUrl);
       if (result) return makeCb01Stream('MaxStream', result.url);
