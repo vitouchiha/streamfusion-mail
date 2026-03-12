@@ -4,7 +4,6 @@ const {
   normalizeExtractorUrl,
   getProxiedUrl,
 } = require('./common');
-const { checkQualityFromPlaylist } = require('../quality_helper.js');
 const { fetchWithCloudscraper } = require('../utils/fetcher');
 
 function extractScriptBlocks(html) {
@@ -103,7 +102,8 @@ async function extractVixCloud(url, pageReferer = null) {
     if (proxiedUrl !== embedUrl) {
       try {
         const response = await fetch(proxiedUrl, {
-          headers: { "User-Agent": USER_AGENT, "Referer": embedReferer }
+          headers: { "User-Agent": USER_AGENT, "Referer": embedReferer },
+          signal: AbortSignal.timeout(6000)
         });
         if (response.ok) {
           const text = await response.text();
@@ -120,7 +120,8 @@ async function extractVixCloud(url, pageReferer = null) {
     if (!html) {
       try {
         const response = await fetch(embedUrl, {
-          headers: { "User-Agent": USER_AGENT, "Referer": embedReferer }
+          headers: { "User-Agent": USER_AGENT, "Referer": embedReferer },
+          signal: AbortSignal.timeout(6000)
         });
         if (response.ok) {
           const text = await response.text();
@@ -138,7 +139,7 @@ async function extractVixCloud(url, pageReferer = null) {
       console.log(`[Extractors] VixCloud proxy/direct failed, retrying with cloudscraper`);
       html = await fetchWithCloudscraper(embedUrl, {
         retries: 1,
-        timeout: 12000,
+        timeout: 8000,
         referer: embedReferer
       });
     }
@@ -169,9 +170,13 @@ async function extractVixCloud(url, pageReferer = null) {
       "Referer": selfReferer
     };
 
+    // Derive quality from URL params instead of fetching playlist (saves ~3s per stream)
     let quality = "Auto";
-    const detectedQuality = await checkQualityFromPlaylist(finalUrl, headers);
-    if (detectedQuality) quality = detectedQuality;
+    if (canPlayFhd || /[?&]h=1(?:&|$)/.test(finalUrl) || /[?&]b=1(?:&|$)/.test(finalUrl)) {
+      quality = "1080p";
+    } else {
+      quality = "720p";
+    }
 
     return [{
       url: finalUrl,
