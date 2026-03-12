@@ -359,7 +359,8 @@ function getStreams(id, type, season, episode, providerContext = null) {
               behaviorHints,
               quality: normalizedQuality,
               type: "direct",
-              addonBaseUrl: providerContext?.addonBaseUrl
+              addonBaseUrl: providerContext?.addonBaseUrl,
+              ...(extracted.mfpHandled ? { mfpHandled: true } : {}),
             });
           }
         } catch (e) {
