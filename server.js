@@ -155,7 +155,7 @@ function buildManifestId(config = {}, options = {}) {
 }
 
 function buildManifestName(config = {}, options = {}) {
-  return shouldUseConfiguredManifestIdentity(config, options) ? `${manifest.name} Config` : manifest.name;
+  return manifest.name;
 }
 
 function copyProxyResponseHeaders(res, headers = {}) {
