@@ -401,8 +401,8 @@ async function getStreams(id, type, season, episode, config = {}) {
     const allStreams = [];
     const settled = new Map();
 
-    const ABSOLUTE_CAP_MS = 25000; // never wait more than 25s total
-    const GRACE_AFTER_FIRST_MS = 12000; // 12s grace after first streams arrive
+    const ABSOLUTE_CAP_MS = 45000; // never wait more than 45s total (Vercel maxDuration=60s)
+    const GRACE_AFTER_FIRST_MS = 20000; // 20s grace after first streams arrive
 
     await new Promise((resolveAll) => {
       let resolved = false;
