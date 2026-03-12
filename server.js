@@ -1043,10 +1043,11 @@ app.get('/debug/guardaserie-streams', requireDebugAuth, async (req, res) => {
 });
 
 app.get('/debug/browser-sv', requireDebugAuth, async (req, res) => {
-  const { launchBrowser } = require('./src/utils/browser');
+  const { launchBrowser, applyStealthEvasions } = require('./src/utils/browser');
   const raw = (process.env.WEBSHARE_PROXIES || '').trim();
   const proxies = raw ? raw.split(',').map(s => s.trim()).filter(Boolean) : [];
-  const proxyUrl = proxies.length ? proxies[Math.floor(Math.random() * proxies.length)] : null;
+  const noProxy = req.query.noproxy === '1';
+  const proxyUrl = (!noProxy && proxies.length) ? proxies[Math.floor(Math.random() * proxies.length)] : null;
   const embedUrl = String(req.query.url || 'https://supervideo.tv/e/914t0hxfcmcj').trim();
   const t0 = Date.now();
   const result = { proxy: proxyUrl ? proxyUrl.replace(/:[^:@]+@/, ':***@') : null };
@@ -1057,18 +1058,40 @@ app.get('/debug/browser-sv', requireDebugAuth, async (req, res) => {
     result.connectMs = Date.now() - t0;
     const page = await browser.newPage();
     if (browser._proxyAuth) await page.authenticate(browser._proxyAuth);
+    await applyStealthEvasions(page);
     await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36');
     let manifestUrl = null;
+    let manifestStatus = null;
+    let manifestBodyLen = null;
     page.on('request', (r) => { if (!manifestUrl && /master\.m3u8/i.test(r.url())) manifestUrl = r.url(); });
+    page.on('response', (r) => {
+      if (/master\.m3u8/i.test(r.url())) {
+        manifestStatus = r.status();
+        r.text().then(b => { manifestBodyLen = b ? b.length : 0; }).catch(() => {});
+      }
+    });
     await page.goto(embedUrl, { waitUntil: 'domcontentloaded', timeout: 15000 });
     result.gotoMs = Date.now() - t0;
     result.finalUrl = page.url();
-    result.manifestUrl = manifestUrl;
     const html = await page.content().catch(() => '');
     result.htmlLen = html.length;
     result.hasJwplayer = /jwplayer/i.test(html);
     result.hasCF = /cloudflare|just a moment/i.test(html);
     result.title = (html.match(/<title>([^<]*)<\/title>/i) || [])[1] || null;
+
+    // Trigger JWPlayer play if no manifest captured yet
+    if (!manifestUrl) {
+      await page.waitForFunction(() => typeof window.jwplayer === 'function', { timeout: 5000 }).catch(() => null);
+      await page.evaluate(() => {
+        try { const p = window.jwplayer(); if (p && p.play) { p.setMute(true); p.play(); } } catch {}
+      }).catch(() => null);
+      await page.mouse.click(640, 360).catch(() => null);
+      await new Promise(r => setTimeout(r, 5000)); // wait for manifest request
+    }
+
+    result.manifestUrl = manifestUrl ? manifestUrl.substring(0, 200) : null;
+    result.manifestStatus = manifestStatus;
+    result.manifestBodyLen = manifestBodyLen;
     await page.close().catch(() => {});
     result.totalMs = Date.now() - t0;
     res.json(result);
