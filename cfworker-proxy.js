@@ -30,6 +30,14 @@ const ALLOWED_HOSTS = new Set([
   'streamingcommunity.show',
 ]);
 
+// Domains matched by suffix (for wildcard subdomains like hfs309.serversicuro.cc)
+const ALLOWED_SUFFIXES = ['.serversicuro.cc', '.serversicuro.com'];
+
+function isHostAllowed(hostname) {
+  if (ALLOWED_HOSTS.has(hostname)) return true;
+  return ALLOWED_SUFFIXES.some(suffix => hostname.endsWith(suffix));
+}
+
 function _json(obj, status = 200) {
   return new Response(JSON.stringify(obj), {
     status,
@@ -68,7 +76,7 @@ export default {
     }
 
     // ── Security: only proxy allowed hosts ──────────────────────────────────
-    if (!ALLOWED_HOSTS.has(parsedTarget.hostname)) {
+    if (!isHostAllowed(parsedTarget.hostname)) {
       return _json({ error: `Host not allowed: ${parsedTarget.hostname}` }, 403);
     }
 
@@ -78,20 +86,25 @@ export default {
     const isCrossOrigin = !referer.includes(parsedTarget.hostname);
 
     // ── Build outbound request ──────────────────────────────────────────────
+    // For HLS/media requests, use lighter headers
+    const isMedia = /\.(m3u8|ts|mp4|aac|vtt)([?#]|$)/i.test(parsedTarget.pathname);
+
     const outboundHeaders = {
       'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
       'Referer': referer,
-      'Origin': referer.replace(/\/$/, '').replace(/(\/[^/]+)+$/, ''),
-      'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+      ...(isMedia ? {} : { 'Origin': referer.replace(/\/$/, '').replace(/(\/[^/]+)+$/, '') }),
+      'Accept': isMedia ? '*/*' : 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
       'Accept-Language': 'it-IT,it;q=0.9,en-US;q=0.8,en;q=0.7',
       'Accept-Encoding': 'gzip, deflate, br',
       'Cache-Control': 'no-cache',
       'Pragma': 'no-cache',
-      'Sec-Fetch-Dest': isCrossOrigin ? 'iframe' : 'document',
-      'Sec-Fetch-Mode': isCrossOrigin ? 'navigate' : 'navigate',
-      'Sec-Fetch-Site': isCrossOrigin ? 'cross-site' : 'same-origin',
-      'Sec-Fetch-User': '?1',
-      'Upgrade-Insecure-Requests': '1',
+      ...(isMedia ? {} : {
+        'Sec-Fetch-Dest': isCrossOrigin ? 'iframe' : 'document',
+        'Sec-Fetch-Mode': isCrossOrigin ? 'navigate' : 'navigate',
+        'Sec-Fetch-Site': isCrossOrigin ? 'cross-site' : 'same-origin',
+        'Sec-Fetch-User': '?1',
+        'Upgrade-Insecure-Requests': '1',
+      }),
     };
 
     try {

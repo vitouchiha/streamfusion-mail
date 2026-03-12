@@ -263,39 +263,42 @@ async function extractSuperVideo(url, options = {}) {
     if (!refererBase) refererBase = getRefererBase(embedUrl, "https://supervideo.tv/");
     const proxyUrl = typeof options === 'object' ? String(options.proxyUrl || '').trim() : '';
 
-    // Pick a Webshare proxy for this extraction (used for HTTP fetch + browser + HLS proxy)
+    // Pick a Webshare proxy (kept as fallback for browser extraction)
     const wsProxy = getWebshareProxy();
 
-    // Fetch embed page via wsProxy directly (not CF Worker).
-    // This ensures the HLS token is IP-locked to the wsProxy IP,
-    // matching what the HLS proxy uses for playback.
+    // PRIORITY: Use CF Worker for the embed page fetch.
+    // serversicuro.cc HLS tokens are IP-locked to the IP that loaded the embed page.
+    // CF Worker has a fixed IP, and the HLS proxy also routes serversicuro.cc
+    // through the same CF Worker — so extraction IP = playback IP.
+    // wsProxy is rotating (different IP each connection) which breaks IP-locked tokens.
     const proxiedUrl = getProxiedUrl(embedUrl);
 
     let html;
     let responseStatus;
-    if (wsProxy) {
-      const agent = makeProxyAgent(wsProxy);
-      try {
-        const resp = await axios.get(embedUrl, {
-          headers: { "User-Agent": USER_AGENT, "Referer": refererBase },
-          timeout: 8_000,
-          httpsAgent: agent, httpAgent: agent, proxy: false,
-        });
-        html = typeof resp.data === 'string' ? resp.data : String(resp.data || '');
-        responseStatus = resp.status;
-      } catch (err) {
-        // wsProxy blocked by Cloudflare — try CF Worker (quality may be wrong but URL is valid)
-        log.warn('wsProxy embed fetch failed, trying CF Worker', { embedUrl, error: err.message });
+    let usedCfWorker = false;
+    // Try CF Worker first (fixed IP — matches HLS proxy IP for serversicuro.cc)
+    try {
+      const resp = await axios.get(proxiedUrl, {
+        headers: { "User-Agent": USER_AGENT, "Referer": refererBase },
+        timeout: 8_000,
+      });
+      html = typeof resp.data === 'string' ? resp.data : String(resp.data || '');
+      responseStatus = resp.status;
+      usedCfWorker = true;
+    } catch (err) {
+      log.warn('CF Worker embed fetch failed, trying wsProxy', { embedUrl, error: err.message });
+      if (wsProxy) {
+        const agent = makeProxyAgent(wsProxy);
         try {
-          const resp = await axios.get(proxiedUrl, {
+          const resp = await axios.get(embedUrl, {
             headers: { "User-Agent": USER_AGENT, "Referer": refererBase },
             timeout: 8_000,
+            httpsAgent: agent, httpAgent: agent, proxy: false,
           });
           html = typeof resp.data === 'string' ? resp.data : String(resp.data || '');
           responseStatus = resp.status;
         } catch (err2) {
-          // Both failed — try browser with wsProxy
-          log.warn('CF Worker embed fetch also failed, trying browser', { embedUrl, error: err2.message });
+          log.warn('wsProxy embed also failed, trying browser', { embedUrl, error: err2.message });
           try {
             const browserResolved = await resolveWithBrowser(embedUrl, refererBase, wsProxy);
             if (browserResolved) return browserResolved;
@@ -304,19 +307,8 @@ async function extractSuperVideo(url, options = {}) {
           }
           return null;
         }
-      }
-    } else {
-      // No Webshare proxy — try CF Worker, then fall back to PROXY_URL env
-      try {
-        const resp = await axios.get(proxiedUrl, {
-          headers: { "User-Agent": USER_AGENT, "Referer": refererBase },
-          timeout: 8_000,
-        });
-        html = typeof resp.data === 'string' ? resp.data : String(resp.data || '');
-        responseStatus = resp.status;
-      } catch (err) {
-        log.warn('CF Worker embed fetch failed (no wsProxy), trying PROXY_URL fallback', { embedUrl, error: err.message });
-        // Fallback: use PROXY_URL env var if available
+      } else {
+        // No wsProxy — fall back to PROXY_URL env
         const envProxy = (process.env.PROXY_URL || process.env.PROXY || '').trim();
         if (envProxy) {
           try {
@@ -338,6 +330,10 @@ async function extractSuperVideo(url, options = {}) {
       }
     }
 
+    // When CF Worker was used for the embed fetch, the HLS token is locked to CF Worker IP.
+    // Don't pass wsProxy — the HLS proxy will route through CF Worker for serversicuro.cc.
+    const resultProxyUrl = usedCfWorker ? undefined : (wsProxy || undefined);
+
     let exactManifestUrl = extractDirectManifestUrl(html);
     if (exactManifestUrl) {
       log.warn('direct manifest from initial html', {
@@ -347,7 +343,7 @@ async function extractSuperVideo(url, options = {}) {
       return {
         url: exactManifestUrl,
         headers: { "User-Agent": USER_AGENT, "Referer": getPlaybackReferer(embedUrl) },
-        proxyUrl: wsProxy || undefined,
+        proxyUrl: resultProxyUrl,
       };
     }
 
@@ -368,7 +364,7 @@ async function extractSuperVideo(url, options = {}) {
         return {
           url: packedUrl,
           headers: { "User-Agent": USER_AGENT, "Referer": getPlaybackReferer(embedUrl) },
-          proxyUrl: wsProxy || undefined,
+          proxyUrl: resultProxyUrl,
         };
       }
     }
@@ -393,7 +389,7 @@ async function extractSuperVideo(url, options = {}) {
           });
           return { url: embedUrl, name: 'SuperVideo', isExternal: true };
         }
-        return { url: streamvixUrl, headers: { "User-Agent": USER_AGENT, "Referer": getPlaybackReferer(embedUrl) }, proxyUrl: wsProxy || undefined };
+        return { url: streamvixUrl, headers: { "User-Agent": USER_AGENT, "Referer": getPlaybackReferer(embedUrl) }, proxyUrl: resultProxyUrl };
     }
 
     if (html.includes("Cloudflare") || responseStatus === 403 || responseStatus === 429) {
@@ -435,7 +431,7 @@ async function extractSuperVideo(url, options = {}) {
         return {
           url: exactManifestUrl,
           headers: { "User-Agent": USER_AGENT, "Referer": getPlaybackReferer(embedUrl) },
-          proxyUrl: wsProxy || undefined,
+          proxyUrl: resultProxyUrl,
         };
       }
 
@@ -459,7 +455,7 @@ async function extractSuperVideo(url, options = {}) {
             });
             return { url: embedUrl, name: 'SuperVideo', isExternal: true };
           }
-          return { url: streamvixUrl, headers: { "User-Agent": USER_AGENT, "Referer": getPlaybackReferer(embedUrl) }, proxyUrl: wsProxy || undefined };
+          return { url: streamvixUrl, headers: { "User-Agent": USER_AGENT, "Referer": getPlaybackReferer(embedUrl) }, proxyUrl: resultProxyUrl };
       }
 
       if (!html || html.includes("Cloudflare") || html.includes("Just a moment")) {
@@ -493,7 +489,7 @@ async function extractSuperVideo(url, options = {}) {
           "User-Agent": USER_AGENT,
           "Referer": "https://supervideo.tv/"
         },
-        proxyUrl: wsProxy || undefined,
+        proxyUrl: resultProxyUrl,
       };
     }
 
@@ -505,7 +501,7 @@ async function extractSuperVideo(url, options = {}) {
         return {
           url: finalUrl,
           headers: { "User-Agent": USER_AGENT, "Referer": "https://supervideo.tv/" },
-          proxyUrl: wsProxy || undefined,
+          proxyUrl: resultProxyUrl,
         };
       }
     }
@@ -528,8 +524,14 @@ async function extractSuperVideoValidated(url, options = {}) {
   const IS_SERVERLESS = !!(process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME || process.env.NETLIFY);
   const result = await extractSuperVideo(url, options);
   if (!result || result.isExternal) return result;
-  // serversicuro URLs are OK if a proxy is attached (same IP for extraction & playback)
-  if (result.proxyUrl) return result;
+  // serversicuro URLs are OK when:
+  //  - a per-stream proxyUrl is attached (same IP for extraction & playback), OR
+  //  - CF_PROXY_URL is configured (HLS proxy routes serversicuro.cc through CF Worker)
+  const hasCfProxy = !!(
+    (typeof global !== 'undefined' && global.CF_PROXY_URL) ||
+    (typeof process !== 'undefined' && process.env && process.env.CF_PROXY_URL)
+  );
+  if (result.proxyUrl || hasCfProxy) return result;
   // On serverless without proxy, serversicuro tokens are IP-locked → discard
   if (IS_SERVERLESS && result.url && /serversicuro\.cc/i.test(result.url)) {
     log.warn('discarding serversicuro URL on serverless (IP-locked token, no proxy)', {

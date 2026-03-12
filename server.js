@@ -229,11 +229,10 @@ app.get(HLS_PROXY_PATH, async (req, res) => {
       ? makeProxyAgent(proxyTarget.proxyUrl)
       : getProxyAgent();
 
-    // For serversicuro.cc: tokens are IP-locked to the IP that extracted them.
-    // If a per-stream wsProxy was used for extraction, honour it (same IP).
-    // Only fall back to CF Worker proxy when no per-stream proxy is available.
+    // For serversicuro.cc: tokens are IP-locked to the CF Worker IP that
+    // extracted the embed page.  Always route through CF Worker so the IP matches.
     const cfProxyUrl = (process.env.CF_PROXY_URL || '').trim();
-    const usesCfProxy = cfProxyUrl && /serversicuro\.cc/i.test(proxyTarget.url) && !proxyTarget.proxyUrl;
+    const usesCfProxy = cfProxyUrl && /serversicuro\.cc/i.test(proxyTarget.url);
     const fetchUrl = usesCfProxy
       ? `${cfProxyUrl}${cfProxyUrl.includes('?') ? '&' : '?'}url=${encodeURIComponent(proxyTarget.url)}`
       : proxyTarget.url;
