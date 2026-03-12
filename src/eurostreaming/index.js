@@ -35,26 +35,7 @@ function getEsBaseUrl() {
 async function _esFetch(url, opts = {}) {
   const timeout = opts.timeout || 10000;
 
-  // 1. Try cloudscraper (handles CF JS challenges)
-  try {
-    const body = await fetchWithCloudscraper(url, {
-      retries: 1,
-      timeout,
-      referer: getEsBaseUrl() + '/',
-    });
-    if (body && !body.includes('Just a moment')) {
-      const finalUrl = url; // cloudscraper doesn't expose final URL
-      return {
-        ok: true, status: 200, url: finalUrl,
-        text: async () => body,
-        json: async () => JSON.parse(body),
-      };
-    }
-  } catch (e) {
-    console.log(`[Eurostreaming] cloudscraper failed: ${e.message}`);
-  }
-
-  // 2. Try CF Worker
+  // 1. Try CF Worker first (fastest and most reliable on Vercel)
   const cfBase = (process.env.CF_WORKER_URL || '').trim();
   if (cfBase) {
     try {
@@ -75,6 +56,24 @@ async function _esFetch(url, opts = {}) {
     } catch (e) {
       console.log(`[Eurostreaming] CF Worker fetch failed: ${e.message}`);
     }
+  }
+
+  // 2. Try cloudscraper (handles CF JS challenges — useful locally)
+  try {
+    const body = await fetchWithCloudscraper(url, {
+      retries: 1,
+      timeout,
+      referer: getEsBaseUrl() + '/',
+    });
+    if (body && !body.includes('Just a moment')) {
+      return {
+        ok: true, status: 200, url: url,
+        text: async () => body,
+        json: async () => JSON.parse(body),
+      };
+    }
+  } catch (e) {
+    console.log(`[Eurostreaming] cloudscraper failed: ${e.message}`);
   }
 
   // 3. Direct fallback (works locally)

@@ -380,7 +380,7 @@ async function getStreams(id, type, season, episode, config = {}) {
                 continue;
             }
             if (providerName === 'eurostreaming') {
-              promises.push(withProviderTimeout('Eurostreaming', eurostreaming.getStreams(id, normalizedType, effectiveSeason, normalizedEpisode, sharedContext), 25000));
+              promises.push(withProviderTimeout('Eurostreaming', eurostreaming.getStreams(id, normalizedType, effectiveSeason, normalizedEpisode, sharedContext), 40000));
                 continue;
             }
             if (providerName === 'guardaflix') {

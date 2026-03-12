@@ -335,7 +335,7 @@ async function _solveSafegoCaptcha(safegoUrl) {
       const ocrResp = await fetch('https://api.ocr.space/parse/image', {
         method: 'POST',
         body: ocrForm,
-        signal: AbortSignal.timeout(6000),
+        signal: AbortSignal.timeout(10000),
       });
       const ocrJson = await ocrResp.json().catch(() => ({}));
       const ocrText = ((ocrJson?.ParsedResults || [])[0]?.ParsedText || '').replace(/\D/g, '');
