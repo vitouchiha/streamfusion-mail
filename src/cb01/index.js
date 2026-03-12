@@ -172,7 +172,7 @@ async function searchSeries(showname, year) {
  * - uprot.net                → skip (captcha required)
  * Returns a stream object or null.
  */
-async function extractFromResolvedUrl(resolvedUrl, label) {
+async function extractFromResolvedUrl(resolvedUrl, label, providerContext = null) {
   const hasProxy = !!(process.env.PROXY_URL || process.env.PROXY);
   function makeCb01Stream(playerName, url, headers) {
     const obj = {
@@ -186,7 +186,7 @@ async function extractFromResolvedUrl(resolvedUrl, label) {
   try {
     const host = new URL(resolvedUrl).hostname.toLowerCase();
     if (host.includes('mixdrop') || host.includes('m1xdrop')) {
-      const result = await extractMixDrop(resolvedUrl);
+      const result = await extractMixDrop(resolvedUrl, undefined, providerContext);
       if (result) return makeCb01Stream('MixDrop', result.url, result.headers);
     } else if (host.includes('maxstream')) {
       const result = await extractMaxStream(resolvedUrl);
@@ -204,7 +204,7 @@ async function extractFromResolvedUrl(resolvedUrl, label) {
  * Both iframen1 and iframen2 go through stayonline.pro.
  * The resolved URL determines which extractor to use (MixDrop or MaxStream).
  */
-async function extractMovieStreams(pageUrl) {
+async function extractMovieStreams(pageUrl, providerContext = null) {
   const streams = [];
   try {
     const html = await fetchWithCloudscraper(pageUrl, { referer: getCb01BaseUrl() + '/' });
@@ -224,7 +224,7 @@ async function extractMovieStreams(pageUrl) {
       if (!resolvedUrl) continue;
 
       const label = iframeId ? iframeId.replace('iframen', 'Link') : 'HD';
-      const stream = await extractFromResolvedUrl(resolvedUrl, label);
+      const stream = await extractFromResolvedUrl(resolvedUrl, label, providerContext);
       if (stream) streams.push(stream);
     }
   } catch (err) {
@@ -237,13 +237,13 @@ async function extractMovieStreams(pageUrl) {
  * Resolve streams from a specific episode link on CB01.
  * All CB01 episode links go through stayonline.pro.
  */
-async function extractEpisodeStreams(link) {
+async function extractEpisodeStreams(link, providerContext = null) {
   const streams = [];
   try {
     if (link.includes('stayonline')) {
       const resolvedUrl = await resolveStayOnline(link);
       if (resolvedUrl) {
-        const stream = await extractFromResolvedUrl(resolvedUrl, 'HD');
+        const stream = await extractFromResolvedUrl(resolvedUrl, 'HD', providerContext);
         if (stream) streams.push(stream);
       }
     } else if (link.includes('maxstream')) {
@@ -257,7 +257,7 @@ async function extractEpisodeStreams(link) {
         });
       }
     } else if (link.includes('mixdrop') || link.includes('m1xdrop')) {
-      const result = await extractMixDrop(link);
+      const result = await extractMixDrop(link, undefined, providerContext);
       if (result) {
         const hasProxy = !!(process.env.PROXY_URL || process.env.PROXY);
         streams.push({
@@ -299,7 +299,7 @@ async function extractSeriesStreams(pageUrl, season, episode) {
     );
     const flatMatch1 = flatPattern1.exec(html);
     if (flatMatch1 && flatMatch1[1]) {
-      const s = await extractEpisodeStreams(flatMatch1[1]);
+      const s = await extractEpisodeStreams(flatMatch1[1], providerContext);
       if (s.length) return s;
     }
 
@@ -311,7 +311,7 @@ async function extractSeriesStreams(pageUrl, season, episode) {
     );
     const flatMatch2 = flatPattern2.exec(html);
     if (flatMatch2 && flatMatch2[1]) {
-      const s = await extractEpisodeStreams(flatMatch2[1]);
+      const s = await extractEpisodeStreams(flatMatch2[1], providerContext);
       if (s.length) return s;
     }
 
@@ -348,7 +348,7 @@ async function extractSeriesStreams(pageUrl, season, episode) {
             for (const pat of epPatterns) {
               const m = pat.exec(subHtml);
               if (m && m[1]) {
-                const s = await extractEpisodeStreams(m[1]);
+                const s = await extractEpisodeStreams(m[1], providerContext);
                 if (s.length) return s;
               }
             }
@@ -445,7 +445,7 @@ async function getStreams(id, type, season, episode, providerContext = null) {
       if (isMovie) {
         pageUrl = await searchMovie(title, year);
         if (!pageUrl) continue;
-        const streams = await extractMovieStreams(pageUrl);
+        const streams = await extractMovieStreams(pageUrl, providerContext);
         if (streams.length) {
           console.log(`[CB01] Found ${streams.length} movie stream(s) for "${title}"`);
           return streams;

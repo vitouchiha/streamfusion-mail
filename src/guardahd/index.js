@@ -328,6 +328,7 @@ function getStreams(id, type, season, episode, providerContext = null) {
           const extractedStreams = await extractFromUrl(streamUrl, {
             refererBase: getGuardaHdBaseUrl(),
             proxyUrl: providerContext?.proxyUrl,
+            providerContext,
           });
           if (extractedStreams.length === 0) return;
 

@@ -306,6 +306,7 @@ async function extractSuperVideo(url, options = {}) {
         }
       }
     } else {
+      // No Webshare proxy — try CF Worker, then fall back to PROXY_URL env
       try {
         const resp = await axios.get(proxiedUrl, {
           headers: { "User-Agent": USER_AGENT, "Referer": refererBase },
@@ -314,8 +315,26 @@ async function extractSuperVideo(url, options = {}) {
         html = typeof resp.data === 'string' ? resp.data : String(resp.data || '');
         responseStatus = resp.status;
       } catch (err) {
-        log.warn('CF Worker embed fetch failed (no wsProxy)', { embedUrl, error: err.message });
-        return null;
+        log.warn('CF Worker embed fetch failed (no wsProxy), trying PROXY_URL fallback', { embedUrl, error: err.message });
+        // Fallback: use PROXY_URL env var if available
+        const envProxy = (process.env.PROXY_URL || process.env.PROXY || '').trim();
+        if (envProxy) {
+          try {
+            const fallbackAgent = makeProxyAgent(envProxy);
+            const resp = await axios.get(embedUrl, {
+              headers: { "User-Agent": USER_AGENT, "Referer": refererBase },
+              timeout: 8_000,
+              httpsAgent: fallbackAgent, httpAgent: fallbackAgent, proxy: false,
+            });
+            html = typeof resp.data === 'string' ? resp.data : String(resp.data || '');
+            responseStatus = resp.status;
+          } catch (err2) {
+            log.warn('PROXY_URL fallback also failed', { embedUrl, error: err2.message });
+            return null;
+          }
+        } else {
+          return null;
+        }
       }
     }
 

@@ -9,8 +9,34 @@ const { wrapStreamUrl } = require('../utils/mediaflow.js');
 const { buildProxyUrl, sanitizeProxyHeaders } = require('../utils/hlsProxy');
 require('../fetch_helper.js');
 const { checkQualityFromText } = require('../quality_helper.js');
+const { getProxyAgent } = require('../utils/fetcher.js');
+const axios = require('axios');
 const TMDB_API_KEY = "68e094699525b18a70bab2f86b1fa706";
 const USER_AGENT = "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36";
+
+/**
+ * Fetch via axios with optional proxy agent (PROXY_URL env).
+ * Returns an object with { ok, status, text(), json() } mimicking fetch Response.
+ */
+async function proxyFetch(url, opts = {}) {
+  const agent = getProxyAgent();
+  const axiosOpts = {
+    url,
+    method: opts.method || 'GET',
+    headers: opts.headers || {},
+    timeout: 14000,
+    responseType: 'text',
+    validateStatus: () => true,
+    ...(agent ? { httpsAgent: agent, httpAgent: agent, proxy: false } : {}),
+  };
+  const resp = await axios(axiosOpts);
+  return {
+    ok: resp.status >= 200 && resp.status < 300,
+    status: resp.status,
+    text: async () => resp.data,
+    json: async () => (typeof resp.data === 'string' ? JSON.parse(resp.data) : resp.data),
+  };
+}
 
 function normalizeProviderType(type) {
   const normalized = String(type || "").toLowerCase();
@@ -182,7 +208,7 @@ async function getStreams(id, type, season, episode, providerContext = null) {
 
   try {
     console.log(`[StreamingCommunity] Fetching page: ${url}`);
-    const response = await fetch(url, {
+    const response = await proxyFetch(url, {
       headers: commonHeaders
     });
     if (!response.ok) {
@@ -211,7 +237,7 @@ async function getStreams(id, type, season, episode, providerContext = null) {
       let quality = "720p";
       let cachedPlaylistBody = undefined;
       try {
-        const playlistResponse = await fetch(streamUrl, {
+        const playlistResponse = await proxyFetch(streamUrl, {
           headers: commonHeaders
         });
         if (playlistResponse.ok) {

@@ -17,7 +17,7 @@ const EXTRACTOR_REGISTRY = [
   {
     name: 'MixDrop',
     match: /(mixdrop|m1xdrop)/i,
-    run: (url, options = {}) => extractMixDrop(url, options.refererBase),
+    run: (url, options = {}) => extractMixDrop(url, options.refererBase, options.providerContext),
   },
   {
     name: 'DropLoad',

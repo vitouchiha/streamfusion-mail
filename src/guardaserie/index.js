@@ -457,30 +457,52 @@ function getStreams(id, type, season, episode, providerContext = null) {
 
           if (searchResponse.ok) {
             const searchHtml = yield searchResponse.text();
-            const resultRegex = /<div class="mlnh-2">\s*<h2>\s*<a href="([^"]+)" title="([^"]+)">/i;
-            const match = resultRegex.exec(searchHtml);
-
-            if (match) {
+            // Match ALL results, not just the first — iterate to find the one whose page contains our IMDb ID
+            const resultRegex = /<div class="mlnh-2">\s*<h2>\s*<a href="([^"]+)" title="([^"]+)">/gi;
+            let match;
+            while ((match = resultRegex.exec(searchHtml)) !== null) {
               let foundUrl = match[1];
               const foundTitle = match[2];
 
               // Filter out titles with [SUB ITA]
               if (foundTitle.toUpperCase().includes("[SUB ITA]")) {
                 console.log(`[Guardaserie] Filtering out subbed result from IMDb search: ${foundTitle}`);
-              } else {
-                if (foundUrl.startsWith('/')) foundUrl = `${getGuardaserieBaseUrl()}${foundUrl}`;
-                console.log(`[Guardaserie] Found match by IMDb ID: ${foundUrl}`);
+                continue;
+              }
 
-                const pageResponse = yield fetch(foundUrl, {
-                  headers: {
-                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-                    "Referer": getGuardaserieBaseUrl()
-                  }
-                });
+              if (foundUrl.startsWith('/')) foundUrl = `${getGuardaserieBaseUrl()}${foundUrl}`;
+              console.log(`[Guardaserie] Checking IMDb search result: ${foundTitle} → ${foundUrl}`);
 
-                if (pageResponse.ok) {
-                  showHtml = yield pageResponse.text();
+              const pageResponse = yield fetch(foundUrl, {
+                headers: {
+                  "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                  "Referer": getGuardaserieBaseUrl()
+                }
+              });
+
+              if (pageResponse.ok) {
+                const candidateHtml = yield pageResponse.text();
+
+                // Verify: page must contain our exact IMDb ID (show_imdb var, IMDb link, or raw text)
+                const imdbVarMatch = candidateHtml.match(/show_imdb\s*=\s*'([^']+)'/i);
+                const pageImdbMatches = candidateHtml.match(/tt\d{7,8}/g) || [];
+                const hasExactImdb = (imdbVarMatch && imdbVarMatch[1] === imdbId) || pageImdbMatches.includes(imdbId);
+
+                if (hasExactImdb) {
+                  console.log(`[Guardaserie] Verified IMDb match on page: ${foundTitle} (${imdbId})`);
+                  showHtml = candidateHtml;
                   showUrl = foundUrl;
+                  break;
+                } else {
+                  // Also accept if title matches AND no conflicting IMDb ID exists
+                  const otherImdbIds = pageImdbMatches.filter(id => id !== imdbId);
+                  if (titleMatchesCandidates(foundTitle, candidateTitles) && otherImdbIds.length === 0) {
+                    console.log(`[Guardaserie] Accepted IMDb search result by title match (no conflicting IMDb): ${foundTitle}`);
+                    showHtml = candidateHtml;
+                    showUrl = foundUrl;
+                    break;
+                  }
+                  console.log(`[Guardaserie] Rejected IMDb search result: ${foundTitle} (IMDb on page: ${pageImdbMatches.join(', ') || 'none'}, expected: ${imdbId})`);
                 }
               }
             }

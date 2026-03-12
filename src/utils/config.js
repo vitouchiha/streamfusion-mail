@@ -26,8 +26,8 @@
 const crypto = require('crypto');
 
 const DEFAULT_CONFIG = {
-  mfpUrl:       '',
-  mfpKey:       '',
+  mfpUrl:       (process.env.MFP_URL || '').trim(),
+  mfpKey:       (process.env.MFP_API_PASSWORD || '').trim(),
   proxyUrl:     '',
   hideCatalogs: false,
   providers:    'all',

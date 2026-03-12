@@ -106,4 +106,39 @@ function wrapProviderStreamsWithMfp(streams, config) {
   });
 }
 
-module.exports = { wrapStreamUrl, wrapSubUrl, wrapProviderStreamsWithMfp };
+/**
+ * Use MediaFlow Proxy's /extractor/video endpoint to resolve an embed URL
+ * to a direct video stream. Supports MixDrop, Uqload, etc.
+ *
+ * @param {string} embedUrl  - The embed page URL (e.g. https://mixdrop.ps/e/xyz)
+ * @param {string} host      - Extractor host name: "Mixdrop", "Uqload", etc.
+ * @param {object} config    - { mfpUrl, mfpKey }
+ * @param {boolean} [redirect=true] - Whether to get a redirect stream URL
+ * @returns {Promise<string|null>} - Resolved stream URL or null
+ */
+async function extractViaMfp(embedUrl, host, config, redirect = true) {
+  if (!config?.mfpUrl || !embedUrl || !host) return null;
+  const base = config.mfpUrl.replace(/\/$/, '');
+  const params = new URLSearchParams({
+    host,
+    d: embedUrl,
+    redirect_stream: String(redirect),
+  });
+  if (config.mfpKey) params.set('api_password', config.mfpKey);
+  const url = `${base}/extractor/video?${params}`;
+  try {
+    const resp = await fetch(url, { redirect: 'manual' });
+    if (redirect && resp.status >= 300 && resp.status < 400) {
+      return resp.headers.get('location') || null;
+    }
+    if (resp.ok) {
+      const data = await resp.json().catch(() => null);
+      return data?.url || data?.stream_url || null;
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+module.exports = { wrapStreamUrl, wrapSubUrl, wrapProviderStreamsWithMfp, extractViaMfp };

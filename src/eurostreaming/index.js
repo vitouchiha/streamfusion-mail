@@ -166,7 +166,7 @@ async function resolveHostLink(href) {
  * @param {string} siteName  e.g. "Eurostreaming"
  * @returns {Promise<Array>}  Array of stream objects
  */
-async function scrapingLinks(atag, language, siteName) {
+async function scrapingLinks(atag, language, siteName, providerContext = null) {
   const streams = [];
   const hasProxy = !!(process.env.PROXY_URL || process.env.PROXY);
   const langLabel = language.includes('SUB') ? '🇰🇷 SUB ITA' : '🇮🇹 [ITA]';
@@ -199,7 +199,7 @@ async function scrapingLinks(atag, language, siteName) {
       if (href) {
         const resolved = await resolveHostLink(href);
         if (resolved && (resolved.includes('mixdrop') || resolved.includes('m1xdrop'))) {
-          const result = await extractMixDrop(resolved);
+          const result = await extractMixDrop(resolved, undefined, providerContext);
           if (result) streams.push(makeStream('MixDrop', result.url, result.headers));
         }
       }
@@ -224,7 +224,7 @@ async function scrapingLinks(atag, language, siteName) {
         if (href) {
           const resolved = await resolveHostLink(href);
           if (resolved) {
-            const result = await extractMixDrop(resolved);
+            const result = await extractMixDrop(resolved, undefined, providerContext);
             if (result) streams.push(makeStream('MixDrop', result.url, result.headers));
           }
         }

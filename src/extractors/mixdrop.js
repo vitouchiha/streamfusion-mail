@@ -4,6 +4,7 @@ const {
   getUrlOrigin,
   normalizeExtractorUrl,
 } = require('./common');
+const { extractViaMfp } = require('../utils/mediaflow');
 
 function isMixDropDisabled() {
   if (typeof global !== 'undefined' && global && global.DISABLE_MIXDROP === true) {
@@ -21,13 +22,31 @@ function isMixDropDisabled() {
   return ['1', 'true', 'yes', 'on'].includes(rawEnv);
 }
 
-async function extractMixDrop(url, refererBase = 'https://m1xdrop.net/') {
+async function extractMixDrop(url, refererBase = 'https://m1xdrop.net/', providerContext = null) {
   if (isMixDropDisabled()) return null;
 
   try {
     url = normalizeExtractorUrl(url);
     if (!url) return null;
-    
+
+    // Try MFP extractor first (handles new MixDrop obfuscation)
+    const mfpConfig = providerContext || {};
+    if (mfpConfig.mfpUrl) {
+      const mfpUrl = await extractViaMfp(url, 'Mixdrop', mfpConfig, false);
+      if (mfpUrl) {
+        const origin = getUrlOrigin(url) || 'https://m1xdrop.net';
+        return {
+          url: mfpUrl,
+          headers: {
+            'User-Agent': USER_AGENT,
+            'Referer': `${origin}/`,
+            'Origin': origin
+          }
+        };
+      }
+    }
+
+    // Fallback: local p.a.c.k.e.r extraction (old MixDrop format)
     const response = await fetch(url, {
       headers: {
         "User-Agent": USER_AGENT,
