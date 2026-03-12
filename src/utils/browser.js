@@ -27,18 +27,6 @@ const path = require('path');
 const puppeteerCore = require('puppeteer-core');
 const { createLogger } = require('./logger');
 
-// Try to wrap puppeteer-core with stealth plugin for Cloudflare bypass.
-// Falls back to raw puppeteer-core if stealth evasions are missing (Vercel bundler).
-let puppeteer = puppeteerCore;
-try {
-  const { addExtra } = require('puppeteer-extra');
-  const StealthPlugin = require('puppeteer-extra-plugin-stealth');
-  puppeteer = addExtra(puppeteerCore);
-  puppeteer.use(StealthPlugin());
-} catch (err) {
-  // Stealth unavailable — use raw puppeteer-core
-}
-
 const log = createLogger('browser');
 
 const IS_SERVERLESS = !!(
@@ -107,7 +95,7 @@ async function launchBrowser(options = {}) {
       }
       log.warn('browserless connect', { wsUrlLen: wsUrl.length, hasProxy: !!proxyInfo, wsUrlEnd: wsUrl.slice(-50) });
       const browser = await Promise.race([
-        puppeteer.connect({
+        puppeteerCore.connect({
           browserWSEndpoint: wsUrl,
           defaultViewport: { width: 1280, height: 720 },
         }),
@@ -161,7 +149,7 @@ async function launchBrowser(options = {}) {
   }
 
   try {
-    const browser = await puppeteer.launch(launchOpts);
+    const browser = await puppeteerCore.launch(launchOpts);
     if (proxyInfo && proxyInfo.username) {
       browser._proxyAuth = { username: proxyInfo.username, password: proxyInfo.password };
     }
@@ -226,4 +214,45 @@ function _detectLocalChrome() {
   return '/usr/bin/chromium-browser' || '/usr/bin/chromium' || '/usr/bin/google-chrome' || undefined;
 }
 
-module.exports = { launchBrowser };
+/**
+ * Apply key stealth evasions to a page to avoid headless Chrome detection.
+ * Lighter alternative to puppeteer-extra-plugin-stealth that works on Vercel.
+ * Call BEFORE navigating to any page.
+ */
+async function applyStealthEvasions(page) {
+  await page.evaluateOnNewDocument(() => {
+    // Hide webdriver flag
+    Object.defineProperty(navigator, 'webdriver', { get: () => false });
+
+    // Chrome runtime (non-headless Chrome always has this)
+    if (!window.chrome) window.chrome = {};
+    if (!window.chrome.runtime) {
+      window.chrome.runtime = { connect: () => {}, sendMessage: () => {} };
+    }
+
+    // Realistic plugins array
+    Object.defineProperty(navigator, 'plugins', {
+      get: () => [
+        { name: 'Chrome PDF Plugin', filename: 'internal-pdf-viewer' },
+        { name: 'Chrome PDF Viewer', filename: 'mhjfbmdgcfjbbpaeojofohoefgiehjai' },
+        { name: 'Native Client', filename: 'internal-nacl-plugin' },
+      ],
+    });
+
+    // Realistic languages
+    Object.defineProperty(navigator, 'languages', { get: () => ['en-US', 'en'] });
+
+    // Permissions API — prevent detection via Notification permission
+    const origQuery = window.Permissions?.prototype?.query;
+    if (origQuery) {
+      window.Permissions.prototype.query = function (params) {
+        if (params?.name === 'notifications') {
+          return Promise.resolve({ state: 'denied', onchange: null });
+        }
+        return origQuery.call(this, params);
+      };
+    }
+  });
+}
+
+module.exports = { launchBrowser, applyStealthEvasions };

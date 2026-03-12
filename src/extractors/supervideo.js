@@ -639,6 +639,9 @@ async function _doFetchWithBrowser(url, refererBase, proxyUrl, setBrowser) {
       await page.authenticate(browser._proxyAuth);
     }
     log.warn('page created + auth', { ms: Date.now() - t0 });
+    // Apply stealth evasions before any navigation
+    const { applyStealthEvasions } = require('../utils/browser');
+    await applyStealthEvasions(page);
     let manifestUrl = null;
     let manifestBodyPromise = null;
     let manifestResponseOk = false;
