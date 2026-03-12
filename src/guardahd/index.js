@@ -344,10 +344,12 @@ function getStreams(id, type, season, episode, providerContext = null) {
 
             const normalizedQuality = getQualityFromName(quality);
             const hasPlaybackHeaders = extracted.headers && Object.keys(extracted.headers).length > 0;
+            // serversicuro.cc tokens are IP-locked to the server that extracted them.
+            // Let the internal HLS proxy handle playback so the same IP is used.
             const behaviorHints = extracted.isExternal
               ? { notWebReady: true }
               : hasPlaybackHeaders
-                ? { notWebReady: true, proxyPlaybackDisabled: true }
+                ? { notWebReady: true }
                 : undefined;
 
             streams.push({
@@ -355,6 +357,8 @@ function getStreams(id, type, season, episode, providerContext = null) {
               title: extracted.isExternal ? `Web Browser - ${displayName}` : displayName,
               url: extracted.url,
               headers: extracted.headers,
+              proxyUrl: extracted.proxyUrl,
+              manifestBody: extracted.manifestBody,
               isExternal: extracted.isExternal,
               behaviorHints,
               quality: normalizedQuality,
