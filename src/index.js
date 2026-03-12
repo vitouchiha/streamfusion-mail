@@ -324,8 +324,10 @@ async function getStreams(id, type, season, episode, config = {}) {
 
       // ── MFP-selective helpers ────────────────────────────────────────────────
       // Providers where MFP is applied instead of the internal HLS proxy.
-      // For all other providers, MFP is NOT applied (it can break playback).
-      const MFP_PROVIDERS = new Set(['guardoserie', 'guardaflix', 'animesaturn', 'animeunity', 'guardahd', 'guardaserie', 'cb01']);
+      // EXCLUDED: guardaserie, guardahd, cb01, guardoserie — their streams use
+      // IP-locked tokens (serversicuro.cc / mxcontent.net) that break when MFP
+      // fetches from a different IP than the one that extracted them.
+      const MFP_PROVIDERS = new Set(['guardaflix', 'animesaturn', 'animeunity']);
 
       // When MFP is configured, pass a context without addonBaseUrl to these providers
       // so formatStream doesn't apply the internal proxy (avoids double-wrapping).
