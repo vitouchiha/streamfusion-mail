@@ -1104,8 +1104,9 @@ async function getStreams(id, type, season, episode, providerContext = null) {
     for (const stream of streams) {
       const normalizedUrl = normalizePlayableMediaUrl(stream.url);
       if (!normalizedUrl) continue;
-      if (seen.has(normalizedUrl)) continue;
-      seen.add(normalizedUrl);
+      const dedupKey = normalizedUrl + '|' + (stream.language || '');
+      if (seen.has(dedupKey)) continue;
+      seen.add(dedupKey);
       deduped.push({ ...stream, url: normalizedUrl });
     }
 
