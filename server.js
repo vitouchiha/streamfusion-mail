@@ -357,8 +357,8 @@ function buildManifest(config, options = {}) {
   }
 
   // cinemeta=true: use per-resource idPrefixes to avoid "metadati non trovati"
-  const streamTypes    = [...new Set([...nativeTypes, 'movie'])];
-  const streamPrefixes = [...new Set([...nativePrefixes, 'tt'])];
+  const streamTypes    = [...new Set([...nativeTypes, 'movie', 'anime'])];
+  const streamPrefixes = [...new Set([...nativePrefixes, 'tt', 'kitsu:'])];
 
   return {
     ...manifest,
