@@ -560,6 +560,34 @@ app.get('/debug/providers', requireDebugAuth, async (req, res) => {
   res.json(result);
 });
 
+// Temporary diagnostic: test CF Worker fetch for guardoserie
+app.get('/debug/cf-guardoserie', requireDebugAuth, async (req, res) => {
+  const cfBase = (process.env.CF_WORKER_URL || '').trim();
+  const cfAuth = (process.env.CF_WORKER_AUTH || '').trim();
+  const targetUrl = 'https://guardoserie.digital/?s=how+i+met+your+mother';
+  const result = { cfBase: cfBase ? cfBase.substring(0, 40) + '...' : 'NOT SET', cfAuth: cfAuth ? 'SET (' + cfAuth.length + ' chars)' : 'NOT SET' };
+  if (!cfBase) return res.json({ ...result, error: 'CF_WORKER_URL not set' });
+  try {
+    const workerUrl = new URL(cfBase.replace(/\/$/, ''));
+    workerUrl.searchParams.set('url', targetUrl);
+    const headers = { 'Accept': 'text/html, */*' };
+    if (cfAuth) headers['x-worker-auth'] = cfAuth;
+    result.workerFullUrl = workerUrl.toString().substring(0, 120);
+    const t0 = Date.now();
+    const resp = await fetch(workerUrl.toString(), { headers, signal: AbortSignal.timeout(15000) });
+    const body = await resp.text();
+    result.status = resp.status;
+    result.ok = resp.ok;
+    result.ms = Date.now() - t0;
+    result.bodyLength = body.length;
+    result.bodySnippet = body.substring(0, 300);
+    result.hasSerieLinks = body.includes('/serie/');
+  } catch (e) {
+    result.error = e.message;
+  }
+  res.json(result);
+});
+
 app.get('/debug/providers-stream', requireDebugAuth, async (req, res) => {
   const raw = String(req.query.id || req.query.imdb || 'tt0944947:1:1').trim();
   const type = String(req.query.type || 'series').toLowerCase() === 'movie' ? 'movie' : 'series';
