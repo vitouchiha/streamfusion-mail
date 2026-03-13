@@ -588,14 +588,17 @@ async function getStreams(id, type, season, episode, providerContext = null) {
         const contextKitsuId = providerContext && /^\d+$/.test(String(providerContext.kitsuId || ''))
             ? String(providerContext.kitsuId)
             : null;
+        const isExplicitKitsuRequest = id.toString().startsWith('kitsu:');
         const shouldIncludeSeasonHintForKitsu =
             providerContext && providerContext.seasonProvided === true;
 
-        if (id.toString().startsWith('kitsu:') || contextKitsuId) {
+        if (isExplicitKitsuRequest || contextKitsuId) {
             const kitsuId =
                 contextKitsuId ||
                 (((id.toString().match(/^kitsu:(\d+)/i) || [])[1]) || null);
-            const seasonHintForKitsu = shouldIncludeSeasonHintForKitsu ? season : null;
+            const seasonHintForKitsu = isExplicitKitsuRequest
+                ? (shouldIncludeSeasonHintForKitsu ? season : null)
+                : (effectiveSeason >= 1 ? effectiveSeason : null);
             const mapped = kitsuId ? await getIdsFromKitsu(kitsuId, seasonHintForKitsu, episode) : null;
             if (mapped && mapped.tmdbId) {
                 tmdbId = mapped.tmdbId;
