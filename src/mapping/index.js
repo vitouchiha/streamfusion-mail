@@ -576,9 +576,8 @@ async function searchAnimeUnity(titles, anilistId) {
         }
       }
 
-      // Also match by title similarity
-      if (paths.length === 0) {
-        const normalizedTitle = title.toLowerCase().replace(/[^a-z0-9]+/g, "");
+      // Also match by title similarity (always, even if anilist matched)
+      const normalizedTitle = title.toLowerCase().replace(/[^a-z0-9]+/g, "");
         if (normalizedTitle) {
           for (const r of records) {
             if (!r.id || !r.slug) continue;
@@ -594,7 +593,6 @@ async function searchAnimeUnity(titles, anilistId) {
             if (paths.length >= 5) break;
           }
         }
-      }
 
       cacheSet(key, paths);
       paths.forEach(p => allPaths.add(p));
@@ -609,6 +607,57 @@ async function searchAnimeUnity(titles, anilistId) {
 }
 
 // ─── Main resolution ──────────────────────────────────────────────────────────
+
+// Season-specific Kitsu ID from Fribb offline list (different seasons = different Kitsu entries)
+async function findSeasonSpecificKitsuId(imdbId, tvdbId, requestedSeason) {
+  if (!Number.isInteger(requestedSeason) || requestedSeason < 1) return null;
+  await animeList.ensureLoaded();
+  if (imdbId) {
+    const entry = animeList.findByImdbSeason(imdbId, requestedSeason);
+    if (entry?.kitsu_id) return String(entry.kitsu_id);
+  }
+  if (tvdbId) {
+    const entry = animeList.findByTvdbSeason(Number(tvdbId), requestedSeason);
+    if (entry?.kitsu_id) return String(entry.kitsu_id);
+  }
+  return null;
+}
+
+// Filter provider paths by season: prefer season-specific paths (e.g. slug ending in "-2")
+function filterPathsBySeason(paths, requestedSeason) {
+  if (!Array.isArray(paths) || paths.length <= 1) return paths;
+  if (!Number.isInteger(requestedSeason) || requestedSeason < 1) return paths;
+
+  // Extract the "clean slug" from a provider path, stripping:
+  //   AnimeUnity numeric prefix (/anime/4851-...),
+  //   AnimeWorld hash suffix (.JvOQx),
+  //   common language tags (-ita, -sub-ita, -ita-sub, etc.)
+  function cleanSlug(p) {
+    let slug = p.split('/').pop() || '';
+    slug = slug.replace(/^\d+-/, '');          // AnimeUnity ID prefix
+    slug = slug.replace(/\.[a-zA-Z0-9]{4,8}$/, ''); // AnimeWorld hash suffix
+    slug = slug.replace(/-(ita|sub-ita|ita-sub|sub|eng|raw|jp|dub)$/i, ''); // language tag
+    return slug.toLowerCase();
+  }
+
+  if (requestedSeason >= 2) {
+    const num = String(requestedSeason);
+    const seasonPaths = paths.filter(p => {
+      const slug = cleanSlug(p);
+      return slug.endsWith('-' + num) || slug.includes('-' + num + '-') ||
+             new RegExp(`[-_](season-?${num}|s${num})$`, 'i').test(slug);
+    });
+    if (seasonPaths.length > 0) return seasonPaths;
+  } else {
+    // Season 1: exclude paths whose clean slug contains a trailing season number (2-20)
+    const s1Paths = paths.filter(p => {
+      const slug = cleanSlug(p);
+      return !/-([2-9]|1\d|20)$/.test(slug) && !/[-_]season-?\d+$/i.test(slug);
+    });
+    if (s1Paths.length > 0) return s1Paths;
+  }
+  return paths;
+}
 
 async function resolveByKitsu(kitsuId, options = {}) {
   const id = String(kitsuId).replace(/^kitsu:/i, "").trim();
@@ -625,6 +674,21 @@ async function resolveByKitsu(kitsuId, options = {}) {
   ]);
 
   if (!kitsuAnime) return cacheSet(cacheKey, { ok: false, error: "not_found" });
+
+  // Season-specific override: if a season is requested and the Fribb list has
+  // a different Kitsu entry for that season, re-resolve with the correct one.
+  const requestedSeason = Number.isInteger(parseInt(String(options.season ?? ""), 10))
+    ? parseInt(String(options.season), 10) : null;
+  if (requestedSeason >= 1 && !options._seasonResolved) {
+    const seasonKitsu = await findSeasonSpecificKitsuId(
+      externalIds.imdb || null,
+      externalIds.tvdb ? Number(externalIds.tvdb) : null,
+      requestedSeason
+    );
+    if (seasonKitsu && seasonKitsu !== id) {
+      return resolveByKitsu(seasonKitsu, { ...options, _seasonResolved: true });
+    }
+  }
 
   // Resolve TMDB ID — offline list now provides tmdb directly
   let tmdbId = externalIds.tmdb || null;
@@ -662,9 +726,6 @@ async function resolveByKitsu(kitsuId, options = {}) {
 
   // Build episode data
   const requestedEpisode = parseInt(String(options.episode || ""), 10) || null;
-  const requestedSeason = Number.isInteger(parseInt(String(options.season ?? ""), 10))
-    ? parseInt(String(options.season), 10)
-    : null;
 
   // Episode airdate
   let episodeAirdate = null;
@@ -680,11 +741,18 @@ async function resolveByKitsu(kitsuId, options = {}) {
 
   // Provider path search (parallel)
   const searchTitles = buildSearchTitles(kitsuAnime);
-  const [animeWorldPaths, animeSaturnPaths, animeUnityPaths] = await Promise.all([
+  let [animeWorldPaths, animeSaturnPaths, animeUnityPaths] = await Promise.all([
     searchAnimeWorld(searchTitles),
     searchAnimeSaturn(searchTitles),
     searchAnimeUnity(searchTitles, externalIds.anilist),
   ]);
+
+  // Filter paths by season to avoid S1 results when S2 is requested (and vice versa)
+  if (requestedSeason >= 1) {
+    animeWorldPaths = filterPathsBySeason(animeWorldPaths, requestedSeason);
+    animeSaturnPaths = filterPathsBySeason(animeSaturnPaths, requestedSeason);
+    animeUnityPaths = filterPathsBySeason(animeUnityPaths, requestedSeason);
+  }
 
   const payload = {
     ok: true,
@@ -761,6 +829,20 @@ function buildSearchTitles(kitsuAnime) {
   if (kitsuAnime.titles?.en_jp) titles.add(kitsuAnime.titles.en_jp);
   if (kitsuAnime.canonicalTitle) titles.add(kitsuAnime.canonicalTitle);
   if (kitsuAnime.titles?.en_us) titles.add(kitsuAnime.titles.en_us);
+
+  // Strip season suffixes to create base titles (so S2-specific titles also find S1/S2 results)
+  // Added BEFORE ja_jp so they're within the slice(0,3) search limit
+  const originals = [...titles];
+  for (const t of originals) {
+    for (const pat of [
+      /\s*(season\s*\d+|\d+(st|nd|rd|th)\s*season|part\s*\d+|第[\d０-９]+期)\s*$/i,
+      /\s+\d+\s*$/,  // trailing number like "Naruto 2"
+    ]) {
+      const stripped = t.replace(pat, "").trim();
+      if (stripped && stripped !== t && stripped.length > 3) titles.add(stripped);
+    }
+  }
+
   if (kitsuAnime.titles?.ja_jp) titles.add(kitsuAnime.titles.ja_jp);
   return [...titles].filter(Boolean);
 }

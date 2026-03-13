@@ -222,6 +222,22 @@ function findAllByImdb(id) { return byImdb.get(String(id)) || []; }
 function findAllByTmdb(id) { return byTmdb.get(Number(id)) || []; }
 function findAllByTvdb(id) { return byTvdb.get(Number(id)) || []; }
 
+/** Find entry for a specific TVDB ID + TVDB season number */
+function findByTvdbSeason(tvdbId, tvdbSeason) {
+  const entries = byTvdb.get(Number(tvdbId)) || [];
+  const s = Number(tvdbSeason);
+  if (!Number.isInteger(s) || s < 1 || entries.length <= 1) return entries[0] || null;
+  return entries.find(e => e.season?.tvdb === s) || entries[0] || null;
+}
+
+/** Find entry for a specific IMDB ID + TVDB season number */
+function findByImdbSeason(imdbId, tvdbSeason) {
+  const entries = byImdb.get(String(imdbId)) || [];
+  const s = Number(tvdbSeason);
+  if (!Number.isInteger(s) || s < 1 || entries.length <= 1) return entries[0] || null;
+  return entries.find(e => e.season?.tvdb === s) || entries[0] || null;
+}
+
 /** Universal lookup: given any ID type, find the entry */
 function findByAny(provider, id) {
   const n = Number(id);
@@ -263,6 +279,7 @@ module.exports = {
   forceRefresh,
   findByKitsu, findByMal, findByAnilist, findByAnidb,
   findByImdb, findByTmdb, findByTvdb,
+  findByImdbSeason, findByTvdbSeason,
   findAllByImdb, findAllByTmdb, findAllByTvdb,
   findByAny,
   stats,

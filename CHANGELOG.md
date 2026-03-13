@@ -1,3 +1,12 @@
+## [3.0.48] - 2026-03-13
+
+### Fixed
+- **Stagioni anime: risoluzione season-specific** - Per anime multi-stagione (es. Frieren S2), il mapping ora utilizza la voce Fribb corretta per la stagione richiesta (TVDB season), risolvendo al Kitsu/AniList ID della stagione giusta. Prima risolveva sempre alla S1.
+- **AnimeUnity streams ripristinati per S2+** - I titoli di ricerca ora includono anche la versione base senza suffisso stagione (es. "Frieren" oltre a "Frieren Season 2"), permettendo all'API di AnimeUnity di trovare i risultati. Il match anilist_id seleziona poi l'entry corretta.
+- **Filtraggio path per stagione** - I path dei provider (AnimeUnity, AnimeWorld, AnimeSaturn) vengono ora filtrati per stagione: S2 mostra solo path con "-2" nel slug, S1 esclude path di altre stagioni. Elimina i risultati S1 quando si guarda S2.
+
+---
+
 ## [3.0.47] - 2026-03-11
 
 ### Fixed
