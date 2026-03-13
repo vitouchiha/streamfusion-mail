@@ -4,7 +4,13 @@
  * Anime ID List — Offline cross-reference index from Fribb/anime-lists.
  *
  * Downloads ~7 MB JSON once, builds in-memory indexes keyed by every ID type,
- * then refreshes every 24 h (ETag-aware, only re-downloads if changed).
+ * then auto-refreshes periodically (ETag-aware, only re-downloads if changed).
+ *
+ * Features:
+ * - Local file cache: persists across restarts (no redundant 7MB download)
+ * - ETag-based: only downloads when remote data has actually changed
+ * - Configurable interval: ANIME_LIST_UPDATE_HOURS env var (default 24)
+ * - Force refresh: forceRefresh() for manual trigger
  *
  * Usage:
  *   const animeList = require("./anime_list");
@@ -13,9 +19,19 @@
  *   animeList.findByKitsu(12);                // → { imdb_id, themoviedb_id, … }
  */
 
+const fs = require("fs");
+const path = require("path");
+
 const LIST_URL =
   "https://raw.githubusercontent.com/Fribb/anime-lists/master/anime-list-full.json";
-const REFRESH_MS = 24 * 60 * 60 * 1000; // 24 h
+
+const UPDATE_HOURS = Math.max(1, parseInt(process.env.ANIME_LIST_UPDATE_HOURS, 10) || 24);
+const REFRESH_MS = UPDATE_HOURS * 60 * 60 * 1000;
+
+// Local file cache paths — try /tmp first (Vercel), then data/ in project
+const CACHE_DIR = fs.existsSync("/tmp") ? "/tmp" : path.join(__dirname, "..", "..", "data");
+const CACHE_FILE = path.join(CACHE_DIR, "anime-list-full.json.cache");
+const ETAG_FILE  = path.join(CACHE_DIR, "anime-list-etag.txt");
 
 // ─── In-memory indexes ────────────────────────────────────────────────────────
 let byKitsu   = new Map(); // kitsu_id (number)  → entry
@@ -30,6 +46,34 @@ let loaded   = false;
 let loading  = null;   // dedup promise
 let lastEtag = null;
 let refreshTimer = null;
+let lastUpdateAt  = null;  // Date of last successful update
+let totalEntries  = 0;
+
+// ─── Local file cache helpers ─────────────────────────────────────────────────
+function loadCachedEtag() {
+  try { return fs.existsSync(ETAG_FILE) ? fs.readFileSync(ETAG_FILE, "utf8").trim() : null; }
+  catch { return null; }
+}
+
+function saveCacheFiles(jsonBuf, etag) {
+  try {
+    if (!fs.existsSync(CACHE_DIR)) fs.mkdirSync(CACHE_DIR, { recursive: true });
+    fs.writeFileSync(CACHE_FILE, jsonBuf);
+    if (etag) fs.writeFileSync(ETAG_FILE, etag);
+  } catch (err) {
+    console.error("[AnimeList] Cache write failed:", err.message);
+  }
+}
+
+function loadFromCache() {
+  try {
+    if (!fs.existsSync(CACHE_FILE)) return null;
+    const raw = fs.readFileSync(CACHE_FILE, "utf8");
+    const list = JSON.parse(raw);
+    if (!Array.isArray(list) || list.length < 1000) return null;
+    return list;
+  } catch { return null; }
+}
 
 // ─── Build / rebuild indexes ──────────────────────────────────────────────────
 function buildIndexes(list) {
@@ -60,58 +104,104 @@ function buildIndexes(list) {
   byKitsu = _byKitsu; byMal = _byMal; byAnilist = _byAnilist;
   byImdb = _byImdb;   byTmdb = _byTmdb; byTvdb = _byTvdb;
   byAnidb = _byAnidb;
+  totalEntries = list.length;
 }
 
 // ─── Download & refresh ───────────────────────────────────────────────────────
-async function download() {
+async function download(isScheduled = false) {
+  const tag = isScheduled ? "Scheduled update" : "Initial load";
   try {
     const headers = {};
-    if (lastEtag) headers["If-None-Match"] = lastEtag;
+    if (lastEtag) {
+      headers["If-None-Match"] = lastEtag;
+      console.log(`[AnimeList] ${tag}: Saved ETag: ${lastEtag.slice(0, 20)}… | checking remote…`);
+    }
 
     const res = await fetch(LIST_URL, { headers });
 
     if (res.status === 304) {
-      console.log("[AnimeList] Not modified (ETag match), skip reload.");
+      console.log(`[AnimeList] ${tag}: Not modified (304), skip reload.`);
+      lastUpdateAt = new Date();
       return false;
     }
     if (!res.ok) {
-      console.error("[AnimeList] Download failed:", res.status);
+      console.error(`[AnimeList] ${tag}: Download failed HTTP ${res.status}`);
       return false;
     }
 
     const etag = res.headers.get("etag") || null;
-    const list = await res.json();
+    const rawBuf = await res.text();
+    const list = JSON.parse(rawBuf);
 
     if (!Array.isArray(list) || list.length < 1000) {
-      console.error("[AnimeList] Invalid data (length", list?.length, ")");
+      console.error(`[AnimeList] ${tag}: Invalid data (length ${list?.length})`);
       return false;
     }
 
     buildIndexes(list);
     lastEtag = etag;
     loaded = true;
-    console.log(`[AnimeList] Loaded ${list.length} entries, indexes built. ETag: ${etag || "none"}`);
+    lastUpdateAt = new Date();
+
+    // Persist to local file cache (async, non-blocking)
+    saveCacheFiles(rawBuf, etag);
+
+    console.log(`[AnimeList] ${tag}: Loaded ${list.length} entries, indexes built. ETag: ${etag || "none"}`);
     return true;
   } catch (err) {
-    console.error("[AnimeList] Download error:", err.message);
+    console.error(`[AnimeList] ${tag}: Error — ${err.message}`);
     return false;
   }
+}
+
+function scheduleRefresh() {
+  if (refreshTimer) return;
+  refreshTimer = setInterval(() => {
+    console.log(`[AnimeList] Running scheduled update (every ${UPDATE_HOURS}h)…`);
+    download(true).then(changed => {
+      if (changed) console.log("[AnimeList] Scheduled update completed — data refreshed.");
+      else console.log("[AnimeList] Scheduled update completed — no changes.");
+    }).catch(err => {
+      console.error("[AnimeList] Scheduled update failed:", err.message);
+    });
+  }, REFRESH_MS);
+  if (refreshTimer.unref) refreshTimer.unref();
+  console.log(`[AnimeList] Scheduled periodic updates every ${UPDATE_HOURS}h.`);
 }
 
 async function ensureLoaded() {
   if (loaded) return;
   if (loading) return loading;
-  loading = download().finally(() => { loading = null; });
 
-  // Schedule periodic refresh
-  if (!refreshTimer) {
-    refreshTimer = setInterval(() => {
-      download().catch(() => {});
-    }, REFRESH_MS);
-    if (refreshTimer.unref) refreshTimer.unref(); // don't keep process alive
-  }
+  loading = (async () => {
+    // 1) Try local file cache first (instant, no network)
+    const cachedEtag = loadCachedEtag();
+    const cachedList = loadFromCache();
+    if (cachedList) {
+      buildIndexes(cachedList);
+      lastEtag = cachedEtag;
+      loaded = true;
+      lastUpdateAt = new Date();
+      console.log(`[AnimeList] Loaded ${cachedList.length} entries from local cache. ETag: ${cachedEtag || "none"}`);
+      // Still schedule a background refresh to pick up any remote changes
+      scheduleRefresh();
+      // Trigger a background refresh without blocking
+      download(true).catch(() => {});
+      return;
+    }
+
+    // 2) No local cache — download from remote
+    await download(false);
+    scheduleRefresh();
+  })().finally(() => { loading = null; });
 
   return loading;
+}
+
+/** Force an immediate refresh (for manual or API triggers). */
+async function forceRefresh() {
+  console.log("[AnimeList] Force refresh requested.");
+  return download(true);
 }
 
 // ─── Lookup helpers ───────────────────────────────────────────────────────────
@@ -152,6 +242,7 @@ function findByAny(provider, id) {
 function stats() {
   return {
     loaded,
+    totalEntries,
     kitsu: byKitsu.size,
     mal: byMal.size,
     anilist: byAnilist.size,
@@ -160,11 +251,16 @@ function stats() {
     tvdb: byTvdb.size,
     anidb: byAnidb.size,
     etag: lastEtag,
+    lastUpdateAt: lastUpdateAt ? lastUpdateAt.toISOString() : null,
+    refreshIntervalHours: UPDATE_HOURS,
+    cacheDir: CACHE_DIR,
+    hasCacheFile: fs.existsSync(CACHE_FILE),
   };
 }
 
 module.exports = {
   ensureLoaded,
+  forceRefresh,
   findByKitsu, findByMal, findByAnilist, findByAnidb,
   findByImdb, findByTmdb, findByTvdb,
   findAllByImdb, findAllByTmdb, findAllByTvdb,
