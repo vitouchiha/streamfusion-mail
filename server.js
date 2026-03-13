@@ -1429,6 +1429,49 @@ app.get('/debug/eurostreaming', requireDebugAuth, async (req, res) => {
   res.json(out);
 });
 
+// ─── ES Fetch Path Diagnostic ─────────────────────────────────────────────────
+app.get('/debug/es-fetch-test', requireDebugAuth, async (req, res) => {
+  const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36';
+  const testUrl = req.query.url || 'https://eurostream.ing/wp-json/wp/v2/search?search=Scrubs&_fields=id,subtype&per_page=2';
+  const out = { testUrl };
+
+  // 1. CF Worker path
+  const cfBase = (process.env.CF_WORKER_URL || '').trim();
+  const cfAuth = (process.env.CF_WORKER_AUTH || '').trim();
+  if (cfBase) {
+    const t = Date.now();
+    try {
+      const wUrl = new URL(cfBase.replace(/\/$/, ''));
+      wUrl.searchParams.set('url', testUrl);
+      const h = { 'User-Agent': UA, 'Accept': 'application/json,text/html,*/*' };
+      if (cfAuth) h['x-worker-auth'] = cfAuth;
+      const r = await fetch(wUrl.toString(), { headers: h, signal: AbortSignal.timeout(12000) });
+      const body = await r.text();
+      out.worker = { status: r.status, ok: r.ok, blocked: body.includes('Just a moment'), len: body.length, preview: body.substring(0, 200), ms: Date.now() - t };
+    } catch (e) { out.worker = { error: e.message, ms: Date.now() - t }; }
+  } else {
+    out.worker = { error: 'CF_WORKER_URL not set' };
+  }
+
+  // 2. Cloudscraper path
+  const t2 = Date.now();
+  try {
+    const { fetchWithCloudscraper } = require('./src/utils/fetcher');
+    const body = await fetchWithCloudscraper(testUrl, { retries: 2, timeout: 12000, referer: 'https://eurostream.ing/' });
+    out.cloudscraper = { ok: !!body, blocked: body ? body.includes('Just a moment') : null, len: body ? body.length : 0, preview: body ? body.substring(0, 200) : null, ms: Date.now() - t2 };
+  } catch (e) { out.cloudscraper = { error: e.message, ms: Date.now() - t2 }; }
+
+  // 3. Direct fetch
+  const t3 = Date.now();
+  try {
+    const r = await fetch(testUrl, { headers: { 'User-Agent': UA, 'Accept': 'application/json,text/html,*/*' }, redirect: 'follow', signal: AbortSignal.timeout(10000) });
+    const body = await r.text();
+    out.direct = { status: r.status, ok: r.ok, blocked: body.includes('Just a moment'), len: body.length, preview: body.substring(0, 200), ms: Date.now() - t3 };
+  } catch (e) { out.direct = { error: e.message, ms: Date.now() - t3 }; }
+
+  res.json(out);
+});
+
 // ─── Landing Page ─────────────────────────────────────────────────────────────
 
 app.get('/', (req, res) => {

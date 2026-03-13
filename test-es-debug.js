@@ -1,51 +1,38 @@
-async function test() {
-  const UA = "Mozilla/5.0";
-  const base = "https://eurostream.ing";
-  const postResp = await fetch(base + "/wp-json/wp/v2/posts/132934?_fields=content,title", {headers:{"User-Agent":UA}});
-  const postData = await postResp.json();
-  const description = postData.content.rendered;
-  const yearMatch = /(?<![\/\-])(19|20)\d{2}(?![\/\-])/.exec(description);
-  console.log("Year found:", yearMatch ? yearMatch[0] : "none");
-  const season = 1, ep = "01";
-  const reStr = "\\b" + season + "&#215;" + ep + "\\s*(.*?)(?=<br\\s*/?>)";
-  const re = new RegExp(reStr, "gis");
-  const matches = [...description.matchAll(re)];
-  console.log("Episode matches:", matches.length);
-  if (matches.length > 0) {
-    const matchText = matches[0][1] || "";
-    const parts = matchText.split(/\s*[–\-]\s*/u);
-    const atag = parts.length > 1 ? parts.slice(1).join(" – ") : matchText;
-    console.log("atag snippet:", atag.substring(0, 500));
-    console.log("hasDeltaBit:", /DeltaBit/i.test(atag));
-    console.log("hasMixDrop:", /MixDrop/i.test(atag));
-    console.log("hasMaxStream:", /MaxStream/i.test(atag));
-    const hrere = new RegExp('<a\\s[^>]*href="([^"]+)"[^>]*>\\s*DeltaBit\\s*<\\/a>', "i");
-    const hm = hrere.exec(atag);
-    console.log("DeltaBit href:", hm ? hm[1] : "NOT FOUND");
-    const hreremix = new RegExp('<a\\s[^>]*href="([^"]+)"[^>]*>\\s*MixDrop\\s*<\\/a>', "i");
-    const hmix = hreremix.exec(atag);
-    console.log("MixDrop href:", hmix ? hmix[1] : "NOT FOUND");
+'use strict';
 
-    // Now test resolveHostLink logic
-    if (hm) {
-      console.log("\n--- Testing redirect chain for DeltaBit link ---");
-      let current = hm[1];
-      for (let i = 0; i < 6; i++) {
-        if (/turbovid|deltabit|mixdrop|m1xdrop|maxstream/i.test(current)) {
-          console.log("Recognized host at hop", i, ":", current);
-          break;
-        }
-        if (/safego/i.test(current)) { console.log("Safego at hop", i, ":", current); break; }
-        try {
-          const r = await fetch(current, { headers: { "User-Agent": UA, "Range": "bytes=0-0" }, redirect: "manual" });
-          console.log("Hop", i, "status:", r.status, "location:", r.headers.get("location"));
-          const loc = r.headers.get("location");
-          if (!loc) { console.log("No redirect, final:", current); break; }
-          current = new URL(loc, current).href;
-          console.log("Hop", i, "→", current);
-        } catch(e) { console.log("Hop error:", e.message); break; }
-      }
+// Simulate Vercel environment — force Worker path
+process.env.CF_WORKER_URL = 'https://kisskh-proxy.vitobsfm.workers.dev';
+process.env.CF_WORKER_AUTH = 'PJxVzfuySO5IkMGec1pZsFvWDNbiHRE6jULnB2t3';
+
+const eurostreaming = require('./src/eurostreaming');
+
+async function test() {
+  const start = Date.now();
+  console.log('Testing Eurostreaming getStreams for The Witcher S1E1...');
+  console.log('Using Worker path (simulating Vercel)\n');
+
+  const providerContext = {
+    __requestContext: true,
+    idType: 'imdb',
+    imdbId: 'tt5180504',
+    tmdbId: '71912',
+    primaryTitle: 'The Witcher',
+    titleCandidates: ['The Witcher'],
+    mfpUrl: 'https://easy.koyeb.app/',
+    addonBaseUrl: '',
+  };
+
+  try {
+    const streams = await eurostreaming.getStreams(
+      'tt5180504', 'series', 1, 1, providerContext
+    );
+    console.log(`\nResult: ${streams.length} streams in ${Date.now() - start}ms`);
+    for (const s of streams) {
+      console.log(`  - ${s.name} | ${(s.title || '').substring(0, 80)}`);
     }
+  } catch (err) {
+    console.error('Error:', err.message, err.stack);
   }
 }
-test().catch(e => console.error(e.message));
+
+test();
