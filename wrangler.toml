@@ -14,6 +14,10 @@ binding = "AI"
 binding = "ES_CACHE"
 id = "77d345738f28442c8a19fadc030eb92e"
 
+# Auto-refresh Eurostreaming cache (10 pages per run, ~6 runs for full refresh)
+[triggers]
+crons = ["*/15 * * * *"]
+
 [vars]
 # AUTH_TOKEN is set as a secret via "wrangler secret put AUTH_TOKEN"
 # Do not put it here in plaintext

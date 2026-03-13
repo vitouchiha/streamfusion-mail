@@ -31,6 +31,11 @@
  */
 
 export default {
+  // ── Scheduled cron: auto-refresh Eurostreaming cache ──────────────────
+  async scheduled(event, env, ctx) {
+    ctx.waitUntil(_handleScheduledWarm(env));
+  },
+
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
 
@@ -386,6 +391,73 @@ async function _handleWarmEs(url, env) {
     hasMore: totalPosts >= perPage,
     errors: errors.length > 0 ? errors : undefined,
   });
+}
+
+// ─── Scheduled auto-refresh for Eurostreaming ──────────────────────────────────
+
+const _WARM_PAGES_PER_RUN = 10;
+const _WARM_COOLDOWN_MS = 24 * 3600 * 1000; // 24h between full refreshes
+
+async function _handleScheduledWarm(env) {
+  if (!env?.ES_CACHE) return;
+
+  const state = await env.ES_CACHE.get('es:warm:state', 'json') || { nextPage: 1, titles: {}, lastComplete: 0 };
+
+  // Don't refresh more often than every 24h
+  if (state.lastComplete && Date.now() - state.lastComplete < _WARM_COOLDOWN_MS) return;
+
+  const baseUrl = 'https://eurostream.ing';
+  let { nextPage, titles } = state;
+  if (!titles || typeof titles !== 'object') titles = {};
+
+  for (let i = 0; i < _WARM_PAGES_PER_RUN; i++) {
+    let posts;
+    try {
+      const listUrl = `${baseUrl}/wp-json/wp/v2/posts?per_page=100&page=${nextPage}&_fields=id,title,content`;
+      const body = await _esWarmFetch(listUrl);
+      if (!body) { /* blocked — save progress and retry next cron */
+        await env.ES_CACHE.put('es:warm:state', JSON.stringify({ nextPage, titles, lastComplete: 0 }), { expirationTtl: _ES_KV_TTL });
+        return;
+      }
+      posts = JSON.parse(body);
+    } catch { break; }
+    if (!Array.isArray(posts) || posts.length === 0) { posts = []; }
+
+    // Store batch in KV
+    if (posts.length > 0) {
+      const batch = posts.map(p => ({
+        id: p.id,
+        title: { rendered: p.title?.rendered || '' },
+        content: { rendered: p.content?.rendered || '' },
+      }));
+      try {
+        await env.ES_CACHE.put(`es:page:${nextPage}`, JSON.stringify(batch), { expirationTtl: _ES_KV_TTL });
+      } catch { /* KV write failed — continue */ }
+
+      // Accumulate titles
+      for (const post of posts) {
+        const raw = (post.title?.rendered || '')
+          .replace(/&#\d+;/g, m => String.fromCharCode(parseInt(m.slice(2, -1), 10)))
+          .replace(/&amp;/g, '&').replace(/&quot;/g, '"').replace(/&lt;/g, '<').replace(/&gt;/g, '>').trim();
+        if (raw) {
+          const key = raw.toLowerCase();
+          if (!titles[key]) titles[key] = [];
+          titles[key].push({ id: post.id, page: nextPage });
+        }
+      }
+    }
+
+    // Last page reached
+    if (posts.length < 100) {
+      try { await env.ES_CACHE.put('es:titles', JSON.stringify(titles), { expirationTtl: _ES_KV_TTL }); } catch {}
+      await env.ES_CACHE.put('es:warm:state', JSON.stringify({ nextPage: 1, titles: {}, lastComplete: Date.now() }), { expirationTtl: _ES_KV_TTL });
+      return;
+    }
+    nextPage++;
+  }
+
+  // More pages remain — save progress
+  await env.ES_CACHE.put('es:warm:state', JSON.stringify({ nextPage, titles, lastComplete: 0 }), { expirationTtl: _ES_KV_TTL });
 }
 
 /** Format proxy response for all modes (nofollow, wantCookie, passthrough). */

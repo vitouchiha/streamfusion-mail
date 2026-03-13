@@ -559,6 +559,38 @@ async function _searchViaKvIndex(showname) {
     }
   }
 
+  // If local index produced no results, also try KV index (catches new posts)
+  if (results.length === 0 && _cachedTitlesIndex === index) {
+    const cfBase = (process.env.CF_WORKER_URL || '').trim();
+    if (cfBase) {
+      try {
+        const wUrl = new URL(cfBase.replace(/\/$/, ''));
+        wUrl.searchParams.set('es_titles', '1');
+        const headers = { 'User-Agent': UA };
+        const cfAuth = (process.env.CF_WORKER_AUTH || '').trim();
+        if (cfAuth) headers['x-worker-auth'] = cfAuth;
+        const resp = await fetch(wUrl.toString(), { headers, signal: AbortSignal.timeout(5000) });
+        if (resp.ok) {
+          const kvIndex = await resp.json();
+          if (kvIndex && typeof kvIndex === 'object') {
+            for (const [title, entries] of Object.entries(kvIndex)) {
+              const ratio = titleRatio(title, searchLower);
+              if (ratio >= 0.6) {
+                for (const entry of entries) {
+                  const id = typeof entry === 'object' ? entry.id : entry;
+                  const page = typeof entry === 'object' ? entry.page : null;
+                  results.push({ id, page, _ratio: ratio, _title: title });
+                }
+              }
+            }
+          }
+        }
+      } catch (e) {
+        console.log(`[Eurostreaming] KV index fallback failed: ${e.message}`);
+      }
+    }
+  }
+
   // Sort by ratio descending, best matches first
   results.sort((a, b) => b._ratio - a._ratio);
   if (results.length === 0) return null;
