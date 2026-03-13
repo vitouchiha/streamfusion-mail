@@ -660,10 +660,25 @@ async function getStreams(id, type, season, episode, providerContext = null) {
             const results = [];
             let match;
 
+            // Pattern 0: <a> tags with title="" attr pointing to /serie/ (DooPlay poster/card links)
+            const titleAttrRegex = /<a[^>]+href="(https?:\/\/[^"]*\/serie\/[^"]+)"[^>]+title="([^"]+)"[^>]*>/gi;
+            while ((match = titleAttrRegex.exec(searchHtml)) !== null) {
+                const rTitle = match[2].trim();
+                if (rTitle) results.push({ url: match[1], title: rTitle });
+            }
+
             // Pattern 1: links pointing to /serie/ pages (most common layout)
-            const serieRegex = /<a[^>]+href="(https?:\/\/[^"]*\/serie\/[^"]+)"[^>]*>(.*?)<\/a>/gi;
+            // Also grab `title` attribute as fallback (inner text often contains quality badges or junk)
+            const serieRegex = /<a[^>]+href="(https?:\/\/[^"]*\/serie\/[^"]+)"([^>]*)>(.*?)<\/a>/gi;
             while ((match = serieRegex.exec(searchHtml)) !== null) {
-                const rTitle = match[2].replace(/<[^>]+>/g, '').trim();
+                let rTitle = match[3].replace(/<[^>]+>/g, '').trim();
+                // Strip quality badges that get concatenated with the title
+                rTitle = rTitle.replace(/^(?:FULL\s*HD|HD|SD|4K|CAM)\s*/i, '').trim();
+                if (!rTitle) {
+                    // Fallback: use title="" attribute from the <a> tag
+                    const titleAttr = (match[2].match(/\btitle\s*=\s*"([^"]+)"/i) || [])[1];
+                    if (titleAttr) rTitle = titleAttr.trim();
+                }
                 if (rTitle) results.push({ url: match[1], title: rTitle });
             }
 
@@ -701,8 +716,13 @@ async function getStreams(id, type, season, episode, providerContext = null) {
             allResults.push(...res);
         }
 
-        // Deduplicate results by URL
-        allResults = Array.from(new Map(allResults.map(item => [item.url, item])).values());
+        // Deduplicate results by URL (keep first occurrence — usually the featured result)
+        const seenUrls = new Set();
+        allResults = allResults.filter(r => {
+            if (seenUrls.has(r.url)) return false;
+            seenUrls.add(r.url);
+            return true;
+        });
 
         const decodeEntities = (str) => {
             return str.replace(/&#(\d+);/g, (match, dec) => String.fromCharCode(dec))
