@@ -259,7 +259,7 @@ async function resolveHostLink(href) {
 
 /**
  * Scrape the player links from a raw HTML anchor block.
- * Priority: MixDrop → DeltaBit (Turbovid) → MaxStream.
+ * Extracts ALL available players in parallel (MixDrop, DeltaBit, Turbovid, MaxStream, DL).
  *
  * @param {string} atag   Raw HTML snippet with <a> tags for this episode
  * @param {string} language  "\nITA" or "\nSUB-ITA"
@@ -269,25 +269,23 @@ async function resolveHostLink(href) {
 async function scrapingLinks(atag, language, siteName, providerContext = null) {
   const streams = [];
   const langEmoji = language.includes('SUB') ? '🇰🇷' : '🇮🇹';
+  const cfBase = (process.env.CF_WORKER_URL || '').trim();
+  const cfAuth = (process.env.CF_WORKER_AUTH || '').trim();
 
-  function makeStream(playerName, url, headers) {
+  function makeStream(playerName, url, headers, opts = {}) {
     return formatStream({
       url: url,
       headers: headers || undefined,
       name: `Eurostreaming - ${playerName}`,
       title: providerContext?._displayName || siteName,
-      quality: 'HD',
+      quality: opts.quality || 'HD',
       language: langEmoji,
       type: 'direct',
-      addonBaseUrl: providerContext?.addonBaseUrl,
+      addonBaseUrl: opts.mfpHandled ? undefined : providerContext?.addonBaseUrl,
+      mfpHandled: opts.mfpHandled || undefined,
       behaviorHints: headers ? { proxyHeaders: { request: headers } } : undefined,
     }, 'Eurostreaming');
   }
-
-  const hasMixDrop = /MixDrop/i.test(atag);
-  const hasDeltaBit = /DeltaBit/i.test(atag);
-  const hasMaxStream = /MaxStream/i.test(atag);
-  const hasTurbovid = /Turbovid/i.test(atag);
 
   // Helper: extract href for a named host from the atag
   function extractHref(hostName) {
@@ -296,124 +294,203 @@ async function scrapingLinks(atag, language, siteName, providerContext = null) {
     return m ? m[1] : null;
   }
 
-  if (hasMixDrop && !hasDeltaBit) {
+  /**
+   * Resolve a clicka.cc URL via Worker es_resolve → returns final player URL.
+   * Works for /mix/, /delta/, /tv/ — all go through safego captcha.
+   */
+  async function workerResolve(clickaUrl) {
+    if (!cfBase) return null;
     try {
-      const href = extractHref('MixDrop');
-      if (href) {
-        const resolved = await resolveHostLink(href);
-        if (resolved && (resolved.includes('mixdrop') || resolved.includes('m1xdrop'))) {
-          const result = await extractMixDrop(resolved, undefined, providerContext);
-          if (result) streams.push(makeStream('MixDrop', result.url, result.headers));
-        }
-      }
-    } catch { /* skip */ }
+      const wu = new URL(cfBase.replace(/\/$/, ''));
+      wu.searchParams.set('es_resolve', '1');
+      wu.searchParams.set('url', clickaUrl);
+      if (cfAuth) wu.searchParams.set('auth', cfAuth);
+      const resp = await fetch(wu.toString(), {
+        headers: { 'User-Agent': UA },
+        signal: AbortSignal.timeout(15000),
+      });
+      if (!resp.ok) return null;
+      const data = await resp.json();
+      return data.url || null;
+    } catch { return null; }
   }
 
-  if (hasDeltaBit) {
-    try {
-      const href = extractHref('DeltaBit');
-      if (href) {
-        // When CF Worker is configured, return a Worker redirect URL.
-        // Stremio calls this URL directly → Worker runs at player's edge (not Vercel's)
-        // → resolves clicka→safego→captcha→deltabit→video.
-        const cfBase = (process.env.CF_WORKER_URL || '').trim();
-        const cfAuth = (process.env.CF_WORKER_AUTH || '').trim();
-        if (cfBase && href.includes('clicka.cc/delta')) {
-          const workerUrl = new URL(cfBase.replace(/\/$/, ''));
-          workerUrl.searchParams.set('es_stream', '1');
-          workerUrl.searchParams.set('url', href);
-          if (cfAuth) workerUrl.searchParams.set('auth', cfAuth);
+  const jobs = [];
 
-          // Return as a direct Worker URL — Stremio follows the 302 redirect to the MP4.
-          // mfpHandled: true prevents the addon proxy from wrapping this URL.
-          streams.push(formatStream({
-            url: workerUrl.toString(),
-            name: 'Eurostreaming - DeltaBit',
-            title: providerContext?._displayName || siteName,
-            quality: 'HD',
-            language: langEmoji,
-            type: 'direct',
-            mfpHandled: true,
-          }, 'Eurostreaming'));
-        } else {
-          // Fallback: resolve and extract locally (works when sites aren't blocked)
-          const resolved = await resolveHostLink(href);
-          if (resolved) {
-            const result = await extractTurbovidda(resolved);
-            if (result) streams.push(makeStream('DeltaBit', result.url));
+  // ── MixDrop ────────────────────────────────────────────────────────────
+  if (/MixDrop/i.test(atag)) {
+    const href = extractHref('MixDrop');
+    if (href) {
+      jobs.push((async () => {
+        try {
+          let mixdropUrl = null;
+          if (cfBase && href.includes('clicka.cc')) {
+            mixdropUrl = await workerResolve(href);
           }
-        }
-      }
-    } catch { /* skip */ }
-    // MixDrop as fallback if DeltaBit fails and MixDrop is available
-    if (streams.length === 0 && hasMixDrop) {
-      try {
-        const href = extractHref('MixDrop');
-        if (href) {
-          const resolved = await resolveHostLink(href);
-          if (resolved) {
-            const result = await extractMixDrop(resolved, undefined, providerContext);
-            if (result) streams.push(makeStream('MixDrop', result.url, result.headers));
+          if (!mixdropUrl) {
+            mixdropUrl = await resolveHostLink(href);
           }
-        }
-      } catch { /* skip */ }
+          if (mixdropUrl && (mixdropUrl.includes('mixdrop') || mixdropUrl.includes('m1xdrop'))) {
+            const result = await extractMixDrop(mixdropUrl, undefined, providerContext);
+            if (result) streams.push(makeStream('MixDrop', result.url, result.headers, { mfpHandled: result.mfpHandled }));
+          }
+        } catch { /* skip */ }
+      })());
     }
   }
 
-  if (streams.length === 0 && hasMaxStream) {
-    try {
-      const href = extractHref('MaxStream');
-      if (href) {
-        const resolved = await resolveHostLink(href);
-        const target = resolved || href;
-        const result = await extractMaxStream(target);
-        if (result) streams.push(makeStream('MaxStream', result.url));
-      }
-    } catch { /* skip */ }
+  // ── DeltaBit ───────────────────────────────────────────────────────────
+  if (/DeltaBit/i.test(atag)) {
+    const href = extractHref('DeltaBit');
+    if (href) {
+      jobs.push((async () => {
+        try {
+          if (cfBase && href.includes('clicka.cc')) {
+            // Worker es_stream: resolves full chain + extracts video → 302 to MP4
+            const workerUrl = new URL(cfBase.replace(/\/$/, ''));
+            workerUrl.searchParams.set('es_stream', '1');
+            workerUrl.searchParams.set('url', href);
+            if (cfAuth) workerUrl.searchParams.set('auth', cfAuth);
+            streams.push(makeStream('DeltaBit', workerUrl.toString(), null, { mfpHandled: true }));
+          } else {
+            const resolved = await resolveHostLink(href);
+            if (resolved) {
+              const result = await extractTurbovidda(resolved);
+              if (result) streams.push(makeStream('DeltaBit', result.url));
+            }
+          }
+        } catch { /* skip */ }
+      })());
+    }
   }
 
-  if (streams.length === 0 && hasTurbovid) {
-    try {
-      const href = extractHref('Turbovid');
-      if (href) {
-        const resolved = await resolveHostLink(href);
-        if (resolved) {
-          const result = await extractTurbovidda(resolved);
-          if (result) streams.push(makeStream('Turbovid', result.url));
-        }
-      }
-    } catch { /* skip */ }
+  // ── Turbovid ───────────────────────────────────────────────────────────
+  if (/Turbovid/i.test(atag)) {
+    const href = extractHref('Turbovid');
+    if (href) {
+      jobs.push((async () => {
+        try {
+          if (cfBase && href.includes('clicka.cc')) {
+            // Resolve clicka → turbovid URL, then use es_stream for video extraction
+            const workerUrl = new URL(cfBase.replace(/\/$/, ''));
+            workerUrl.searchParams.set('es_stream', '1');
+            workerUrl.searchParams.set('url', href);
+            if (cfAuth) workerUrl.searchParams.set('auth', cfAuth);
+            streams.push(makeStream('Turbovid', workerUrl.toString(), null, { mfpHandled: true }));
+          } else {
+            const resolved = await resolveHostLink(href);
+            if (resolved) {
+              const result = await extractTurbovidda(resolved);
+              if (result) streams.push(makeStream('Turbovid', result.url));
+            }
+          }
+        } catch { /* skip */ }
+      })());
+    }
   }
 
+  // ── DL (download link via uprot.net/msd/) ──────────────────────────────
+  // DL links go through uprot.net → MixDrop/download page — skip for now
+  // (uprot.net requires captcha bypass which we don't support yet)
+
+  // ── MaxStream (via uprot.net/msf/) ─────────────────────────────────────
+  if (/MaxStream/i.test(atag)) {
+    const href = extractHref('MaxStream');
+    if (href) {
+      jobs.push((async () => {
+        try {
+          const resolved = await resolveHostLink(href);
+          const target = resolved || href;
+          const result = await extractMaxStream(target);
+          if (result) streams.push(makeStream('MaxStream', result.url));
+        } catch { /* skip */ }
+      })());
+    }
+  }
+
+  await Promise.allSettled(jobs);
   return streams;
 }
 
 /**
  * Find episode matches in a Eurostreaming post HTML and extract streams.
- * Pattern: {season}&#215;{ep} … links … <br>
+ * Parses spoiler sections to correctly assign ITA vs SUB-ITA language,
+ * then finds the episode row within the matching season section.
  */
 async function findEpisodeStreams(description, season, episode, providerContext = null) {
   const episodePadded = String(episode).padStart(2, '0');
-  // &#215; is the "×" multiplication sign used as separator between season/ep
-  const re = new RegExp(
-    `\\b${season}&#215;${episodePadded}\\s*(.*?)(?=<br\\s*/?>)`,
-    'gis'
-  );
-  const matches = [...description.matchAll(re)];
-  if (!matches.length) return [];
+  const epPattern = `${season}&#215;${episodePadded}`;
+
+  // Parse spoiler sections: each has a title (e.g. "PRIMA STAGIONE 1 ITA") and content
+  const sectionRe = /su-spoiler-title[^>]*>(?:<[^>]*>)*\s*([^<]+)<\/(?:span|div)>[\s\S]*?su-spoiler-content[^"]*">([\s\S]*?)<\/div>\s*<\/div>/gi;
+  const sections = [...description.matchAll(sectionRe)];
+
+  // Map season number words to digits
+  const SEASON_WORDS = {
+    'prima': 1, 'seconda': 2, 'terza': 3, 'quarta': 4, 'quinta': 5,
+    'sesta': 6, 'settima': 7, 'ottava': 8, 'nona': 9, 'decima': 10,
+  };
 
   const allStreams = [];
-  for (let t = 0; t < matches.length; t++) {
-    const matchText = matches[t][1] || '';
-    // Split after the first " – " to get only the host links part
-    const parts = matchText.split(/\s*[–\-]\s*/u);
-    const atag = parts.length > 1 ? parts.slice(1).join(' – ') : matchText;
-    if (!atag.includes('href')) continue;
 
-    const language = t === 0 ? '\nITA' : '\nSUB-ITA';
-    const streams = await scrapingLinks(atag, language, 'Eurostreaming', providerContext);
-    allStreams.push(...streams);
+  for (const sec of sections) {
+    const sectionTitle = (sec[1] || '').trim().toUpperCase();
+    const sectionContent = sec[2] || '';
+
+    // Determine season number from section title
+    let sectionSeason = null;
+    // Try "STAGIONE N" pattern
+    const numMatch = /STAGIONE\s+(\d+)/i.exec(sectionTitle);
+    if (numMatch) sectionSeason = parseInt(numMatch[1], 10);
+    // Try word pattern: "PRIMA STAGIONE", "SECONDA STAGIONE"
+    if (!sectionSeason) {
+      for (const [word, num] of Object.entries(SEASON_WORDS)) {
+        if (sectionTitle.includes(word.toUpperCase())) { sectionSeason = num; break; }
+      }
+    }
+
+    if (sectionSeason !== season) continue;
+
+    // Determine language from section title
+    const isSub = /SUB[\s\-]*ITA/i.test(sectionTitle);
+    const language = isSub ? '\nSUB-ITA' : '\nITA';
+
+    // Find the episode in this section
+    const epRe = new RegExp(
+      `\\b${epPattern}\\s*(.*?)(?=<br\\s*/?>|\\d+&#215;)`,
+      'gis'
+    );
+    const matches = [...sectionContent.matchAll(epRe)];
+
+    for (const m of matches) {
+      const matchText = m[1] || '';
+      const parts = matchText.split(/\s*[–\-]\s*/u);
+      const atag = parts.length > 1 ? parts.slice(1).join(' – ') : matchText;
+      if (!atag.includes('href')) continue;
+
+      const streams = await scrapingLinks(atag, language, 'Eurostreaming', providerContext);
+      allStreams.push(...streams);
+    }
   }
+
+  // Fallback: if no spoiler sections found, use the old flat regex approach
+  if (sections.length === 0) {
+    const re = new RegExp(
+      `\\b${epPattern}\\s*(.*?)(?=<br\\s*/?>)`,
+      'gis'
+    );
+    const matches = [...description.matchAll(re)];
+    for (let t = 0; t < matches.length; t++) {
+      const matchText = matches[t][1] || '';
+      const parts = matchText.split(/\s*[–\-]\s*/u);
+      const atag = parts.length > 1 ? parts.slice(1).join(' – ') : matchText;
+      if (!atag.includes('href')) continue;
+      const language = t === 0 ? '\nITA' : '\nSUB-ITA';
+      const streams = await scrapingLinks(atag, language, 'Eurostreaming', providerContext);
+      allStreams.push(...streams);
+    }
+  }
+
   return allStreams;
 }
 

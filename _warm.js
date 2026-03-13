@@ -38,15 +38,15 @@ async function warmSearch(query) {
       content = post?.content?.rendered || '';
     } catch { console.log('  Failed to parse post'); continue; }
 
-    // 3. Find and warm clicka.cc redirects
-    const deltaRe = /href="(https?:\/\/clicka\.cc\/delta\/[^"]+)"/gi;
-    const deltas = [];
+    // 3. Find and warm ALL clicka.cc redirects (delta, mix, tv)
+    const clickaRe = /href="(https?:\/\/clicka\.cc\/(?:delta|mix|tv)\/[^"]+)"/gi;
+    const clickas = [];
     let m;
-    while ((m = deltaRe.exec(content)) !== null) deltas.push(m[1]);
-    console.log(`  Delta links: ${deltas.length}`);
+    while ((m = clickaRe.exec(content)) !== null) clickas.push(m[1]);
+    console.log(`  Clicka.cc links: ${clickas.length}`);
 
-    for (let i = 0; i < Math.min(deltas.length, 10); i++) {
-      await warm(`    Delta ${i}`, deltas[i], { nofollow: true });
+    for (let i = 0; i < Math.min(clickas.length, 30); i++) {
+      await warm(`    Link ${i}`, clickas[i], { nofollow: true });
     }
   }
 }
