@@ -337,14 +337,20 @@ function getStreams(id, type, season, episode, providerContext = null) {
       const contextKitsuId = providerContext && /^\d+$/.test(String(providerContext.kitsuId || ""))
         ? String(providerContext.kitsuId)
         : null;
+      const isExplicitKitsuRequest = id.toString().startsWith("kitsu:");
       const shouldIncludeSeasonHintForKitsu =
         providerContext && providerContext.seasonProvided === true;
 
-      if (id.toString().startsWith("kitsu:") || contextKitsuId) {
+      if (isExplicitKitsuRequest || contextKitsuId) {
         const kitsuId =
           contextKitsuId ||
           (((id.toString().match(/^kitsu:(\d+)/i) || [])[1]) || null);
-        const seasonHintForKitsu = shouldIncludeSeasonHintForKitsu ? season : null;
+        // For IMDB/TMDB requests that resolved a Kitsu ID, use the explicit season
+        // from the request URL (it's reliable). For pure Kitsu requests the add-on
+        // may always send season=1, so only pass it when seasonProvided is true.
+        const seasonHintForKitsu = isExplicitKitsuRequest
+          ? (shouldIncludeSeasonHintForKitsu ? season : null)
+          : (effectiveSeason >= 1 ? effectiveSeason : null);
         const mapped = kitsuId ? (yield getIdsFromKitsu(kitsuId, seasonHintForKitsu, episode)) : null;
         if (mapped) {
           if (mapped.tmdbId) {
