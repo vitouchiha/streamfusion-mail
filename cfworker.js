@@ -149,9 +149,17 @@ export default {
       'maxstream.video', 'www.maxstream.video',
       'guardoserie.digital', 'www.guardoserie.digital',
       'guardoserie.best', 'www.guardoserie.best',
+      'animeunity.so', 'www.animeunity.so',
     ]);
     if (!ALLOWED_HOSTS.has(parsedTarget.hostname)) {
       return _json({ error: `Host ${parsedTarget.hostname} is not proxied by this Worker` }, 403);
+    }
+
+    // ── AnimeUnity search: full session + CSRF + POST search ─────────────
+    // CF Worker handles the full flow since AnimeUnity CF-blocks Vercel IPs.
+    // Usage: ?au_search=1&title=Frieren[&anilist_id=182255]
+    if (url.searchParams.get('au_search') === '1') {
+      return _handleAuSearch(url, request);
     }
 
     // ── ES Stream: full clicka→safego→captcha→deltabit→video extraction ────
@@ -334,6 +342,91 @@ async function _esWarmFetch(url) {
   const body = await resp.text();
   if (!resp.ok || body.includes('Just a moment')) return null;
   return body;
+}
+
+async function _handleAuSearch(reqUrl, request) {
+  const title = reqUrl.searchParams.get('title') || '';
+  const anilistId = reqUrl.searchParams.get('anilist_id') || '';
+  if (!title && !anilistId) return _json({ error: 'title or anilist_id required' }, 400);
+
+  const AU_BASE = 'https://www.animeunity.so';
+  const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0.0.0 Safari/537.36';
+
+  // Step 1: GET main page to establish session + CSRF
+  let csrf = null;
+  let sessionCookies = '';
+  try {
+    const mainResp = await fetch(AU_BASE, {
+      headers: {
+        'User-Agent': UA,
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+        'Accept-Language': 'it-IT,it;q=0.9,en-US;q=0.8,en;q=0.7',
+      },
+      redirect: 'follow',
+      signal: AbortSignal.timeout(10000),
+    });
+    if (!mainResp.ok) return _json({ error: 'AU main page fetch failed', status: mainResp.status }, 502);
+    const html = await mainResp.text();
+    csrf = (html.match(/name="csrf-token"\s+content="([^"]+)"/) || [])[1] || null;
+    const setCookies = mainResp.headers.getAll?.('Set-Cookie') || [];
+    sessionCookies = setCookies.map(c => c.split(';')[0]).join('; ');
+    if (!csrf) return _json({ error: 'No CSRF token found on AU page', htmlLen: html.length }, 502);
+  } catch (e) {
+    return _json({ error: 'AU session failed: ' + e.message }, 502);
+  }
+
+  // Step 2: POST search using CSRF + session cookies
+  const searchTitle = title || 'Frieren';
+  try {
+    const searchResp = await fetch(`${AU_BASE}/archivio/get-animes`, {
+      method: 'POST',
+      headers: {
+        'User-Agent': UA,
+        'Content-Type': 'application/json',
+        'Accept': 'application/json',
+        'X-Requested-With': 'XMLHttpRequest',
+        'X-CSRF-TOKEN': csrf,
+        'Cookie': sessionCookies,
+        'Referer': AU_BASE + '/archivio',
+      },
+      body: JSON.stringify({ title: searchTitle }),
+      signal: AbortSignal.timeout(10000),
+    });
+    if (!searchResp.ok) {
+      const errText = await searchResp.text().catch(() => '');
+      return _json({ error: 'AU search failed', status: searchResp.status, body: errText.substring(0, 200) }, 502);
+    }
+    const data = await searchResp.json();
+    const records = data.records || data.data || data || [];
+    if (!Array.isArray(records)) return _json({ records: [], title: searchTitle });
+
+    // Step 3: Build paths (matching by anilist_id if available, else title)
+    const paths = [];
+    if (anilistId) {
+      const match = records.find(r => r.anilist_id === Number(anilistId));
+      if (match && match.id && match.slug) {
+        paths.push(`/anime/${match.id}-${match.slug}`);
+      }
+    }
+    const normTitle = searchTitle.toLowerCase().replace(/[^a-z0-9]+/g, '');
+    if (normTitle) {
+      for (const r of records) {
+        if (!r.id || !r.slug) continue;
+        for (const c of [r.title, r.title_eng, r.title_it].filter(Boolean)) {
+          const norm = c.toLowerCase().replace(/[^a-z0-9]+/g, '');
+          if (norm.includes(normTitle) || normTitle.includes(norm)) {
+            const path = `/anime/${r.id}-${r.slug}`;
+            if (!paths.includes(path)) paths.push(path);
+            break;
+          }
+        }
+        if (paths.length >= 5) break;
+      }
+    }
+    return _json({ paths, title: searchTitle, recordCount: records.length });
+  } catch (e) {
+    return _json({ error: 'AU POST failed: ' + e.message }, 502);
+  }
 }
 
 async function _handleWarmEs(url, env) {

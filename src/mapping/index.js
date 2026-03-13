@@ -572,7 +572,6 @@ async function searchAnimeUnity(titles, anilistId) {
   if (cached !== undefined) return cached;
 
   const session = await getAnimeUnitySession(base);
-  if (!session) return cacheSet(cacheId, []);
 
   // Search using each title via POST /archivio/get-animes
   const allPaths = new Set();
@@ -585,52 +584,86 @@ async function searchAnimeUnity(titles, anilistId) {
     try {
       let records = null;
 
-      // Try direct fetch POST first
-      try {
-        const tc = createTimeoutSignal(8000);
-        const res = await fetch(`${base}/archivio/get-animes`, {
-          method: "POST",
-          signal: tc.signal,
-          headers: {
-            "User-Agent": UA,
-            "Content-Type": "application/json",
-            "X-Requested-With": "XMLHttpRequest",
-            "X-CSRF-TOKEN": session.csrf,
-            "Cookie": session.cookies,
-            "Accept": "application/json",
-          },
-          body: JSON.stringify({ title }),
-        });
-        if (typeof tc.cleanup === "function") tc.cleanup();
-        if (res.ok) {
-          const json = await res.json();
-          const raw = json.records || json.data || json || [];
-          if (Array.isArray(raw) && raw.length > 0) records = raw;
-        }
-      } catch { /* direct POST failed */ }
-
-      // Fallback: use cloudscraper POST with the shared cookie jar
-      if (!records && session.jar) {
+      // Try direct fetch POST first (works locally / non-CF-blocked environments)
+      if (session) {
         try {
-          const csResp = await cloudscraper.post({
-            uri: `${base}/archivio/get-animes`,
-            jar: session.jar,
-            json: { title },
+          const tc = createTimeoutSignal(8000);
+          const res = await fetch(`${base}/archivio/get-animes`, {
+            method: "POST",
+            signal: tc.signal,
             headers: {
               "User-Agent": UA,
+              "Content-Type": "application/json",
               "X-Requested-With": "XMLHttpRequest",
               "X-CSRF-TOKEN": session.csrf,
+              "Cookie": session.cookies,
               "Accept": "application/json",
             },
-            resolveWithFullResponse: true,
-            timeout: 10000,
+            body: JSON.stringify({ title }),
           });
-          if (csResp.statusCode >= 200 && csResp.statusCode < 300) {
-            const data = typeof csResp.body === "string" ? JSON.parse(csResp.body) : csResp.body;
-            const raw = data.records || data.data || data || [];
+          if (typeof tc.cleanup === "function") tc.cleanup();
+          if (res.ok) {
+            const json = await res.json();
+            const raw = json.records || json.data || json || [];
             if (Array.isArray(raw) && raw.length > 0) records = raw;
           }
-        } catch { /* cloudscraper POST also failed */ }
+        } catch { /* direct POST failed */ }
+
+        // Fallback: use cloudscraper POST with the shared cookie jar
+        if (!records && session.jar) {
+          try {
+            const csResp = await cloudscraper.post({
+              uri: `${base}/archivio/get-animes`,
+              jar: session.jar,
+              json: { title },
+              headers: {
+                "User-Agent": UA,
+                "X-Requested-With": "XMLHttpRequest",
+                "X-CSRF-TOKEN": session.csrf,
+                "Accept": "application/json",
+              },
+              resolveWithFullResponse: true,
+              timeout: 10000,
+            });
+            if (csResp.statusCode >= 200 && csResp.statusCode < 300) {
+              const data = typeof csResp.body === "string" ? JSON.parse(csResp.body) : csResp.body;
+              const raw = data.records || data.data || data || [];
+              if (Array.isArray(raw) && raw.length > 0) records = raw;
+            }
+          } catch { /* cloudscraper POST also failed */ }
+        }
+      }
+
+      // Fallback: CF Worker proxy (handles session+CSRF internally)
+      if (!records) {
+        try {
+          const cfWorkerUrl = process.env.CF_WORKER_URL || "https://kisskh-proxy.vitobsfm.workers.dev";
+          const cfAuth = process.env.CF_WORKER_AUTH || "PJxVzfuySO5IkMGec1pZsFvWDNbiHRE6jULnB2t3";
+          const params = new URLSearchParams({
+            url: `${base}/archivio/get-animes`,
+            au_search: "1",
+            title,
+            auth: cfAuth,
+          });
+          if (anilistId) params.set("anilist_id", String(anilistId));
+          const tc2 = createTimeoutSignal(15000);
+          const workerResp = await fetch(`${cfWorkerUrl}?${params}`, {
+            signal: tc2.signal,
+            headers: { "User-Agent": UA },
+          });
+          if (typeof tc2.cleanup === "function") tc2.cleanup();
+          if (workerResp.ok) {
+            const workerData = await workerResp.json();
+            if (Array.isArray(workerData.paths) && workerData.paths.length > 0) {
+              console.log("[Mapping] AnimeUnity: CF Worker found", workerData.paths.length, "paths for", title);
+              cacheSet(key, workerData.paths);
+              workerData.paths.forEach(p => allPaths.add(p));
+              continue;
+            }
+          }
+        } catch (cfErr) {
+          console.log("[Mapping] AnimeUnity: CF Worker fallback failed:", cfErr.message);
+        }
       }
 
       if (!records || records.length === 0) { cacheSet(key, []); continue; }

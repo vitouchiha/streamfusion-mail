@@ -335,6 +335,22 @@ async function fetchResource(url, options = {}) {
           referer,
         });
       }
+      // Fallback: CF Worker proxy for AnimeUnity pages blocked on Vercel
+      if (htmlText === null && url.includes("animeunity")) {
+        try {
+          const cfWorkerUrl = process.env.CF_WORKER_URL || "https://kisskh-proxy.vitobsfm.workers.dev";
+          const cfAuth = process.env.CF_WORKER_AUTH || "PJxVzfuySO5IkMGec1pZsFvWDNbiHRE6jULnB2t3";
+          const proxyResp = await fetchWithTimeout(
+            `${cfWorkerUrl}?url=${encodeURIComponent(url)}&auth=${encodeURIComponent(cfAuth)}`,
+            { method: "GET", headers: { "user-agent": USER_AGENT } },
+            12000
+          );
+          if (proxyResp.ok) {
+            const txt = await proxyResp.text();
+            if (txt && !txt.includes("Just a moment")) htmlText = txt;
+          }
+        } catch { /* CF Worker fallback also failed */ }
+      }
       if (htmlText === null) {
         throw new Error(`HTTP 403/Cloudflare failure for ${url}`);
       }
