@@ -5,7 +5,7 @@
     {
       "src": "api/index.js",
       "use": "@vercel/node",
-      "config": { "maxDuration": 60 }
+      "config": { "maxDuration": 60, "includeFiles": ["es-cache/**", "es-titles-index.json"] }
     }
   ],
   "routes": [

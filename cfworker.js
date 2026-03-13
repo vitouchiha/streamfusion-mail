@@ -40,8 +40,8 @@ export default {
         status: 204,
         headers: {
           'Access-Control-Allow-Origin': '*',
-          'Access-Control-Allow-Methods': 'GET',
-          'Access-Control-Allow-Headers': 'x-worker-auth',
+          'Access-Control-Allow-Methods': 'GET, POST',
+          'Access-Control-Allow-Headers': 'x-worker-auth, content-type',
           'Access-Control-Max-Age': '86400',
         },
       });
@@ -73,6 +73,51 @@ export default {
       } catch (e) {
         return _json({ error: e.message, stack: e.stack });
       }
+    }
+
+    // ── Eurostreaming KV index: return cached titles index ──────────────────
+    if (url.searchParams.get('es_titles') === '1') {
+      if (!env?.ES_CACHE) return _json({ error: 'ES_CACHE binding not found' });
+      try {
+        const idx = await env.ES_CACHE.get('es:titles', 'json');
+        if (!idx) return _json({ error: 'No titles index — run warm_es first' }, 404);
+        return _json(idx);
+      } catch (e) { return _json({ error: e.message }, 500); }
+    }
+
+    // ── Eurostreaming KV post data: return post content from batch page ─────
+    if (url.searchParams.get('es_post_data')) {
+      const postId = url.searchParams.get('es_post_data');
+      const pageNum = url.searchParams.get('es_page');
+      if (!env?.ES_CACHE) return _json({ error: 'ES_CACHE binding not found' });
+      if (!/^\d+$/.test(postId)) return _json({ error: 'Invalid post ID' }, 400);
+      if (!pageNum || !/^\d+$/.test(pageNum)) return _json({ error: 'Missing or invalid es_page param' }, 400);
+      try {
+        const batch = await env.ES_CACHE.get(`es:page:${pageNum}`, 'json');
+        if (!batch || !Array.isArray(batch)) return _json({ error: 'Page not cached' }, 404);
+        const post = batch.find(p => p.id === parseInt(postId, 10));
+        if (!post) return _json({ error: 'Post not found in page' }, 404);
+        return _json(post);
+      } catch (e) { return _json({ error: e.message }, 500); }
+    }
+
+    // ── Eurostreaming KV warm-up: fetch all posts and cache in KV ───────────
+    if (url.searchParams.get('warm_es') === '1') {
+      if (!env?.ES_CACHE) return _json({ error: 'ES_CACHE binding not found' });
+
+      // POST with JSON body = store titles index
+      if (request.method === 'POST') {
+        try {
+          const body = await request.json();
+          if (body && typeof body === 'object') {
+            await env.ES_CACHE.put('es:titles', JSON.stringify(body), { expirationTtl: _ES_KV_TTL });
+            return _json({ ok: true, action: 'index_stored', entries: Object.keys(body).length });
+          }
+          return _json({ error: 'Invalid body' }, 400);
+        } catch (e) { return _json({ error: `Index store failed: ${e.message}` }, 500); }
+      }
+
+      return _handleWarmEs(url, env);
     }
 
     if (!targetUrl) {
@@ -255,6 +300,93 @@ export default {
     }
   },
 };
+
+// ─── Eurostreaming KV warm-up ──────────────────────────────────────────────────
+
+const _ES_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36';
+const _ES_KV_TTL = 172800; // 48h — warm-up data is long-lived
+
+async function _esWarmFetch(url) {
+  const resp = await fetch(url, {
+    headers: {
+      'User-Agent': _ES_UA,
+      'Accept': 'application/json,text/html,*/*',
+      'Accept-Language': 'it-IT,it;q=0.9,en-US;q=0.8,en;q=0.7',
+      'Accept-Encoding': 'gzip, deflate, br',
+      'Cache-Control': 'no-cache',
+      'Sec-Fetch-Dest': 'document',
+      'Sec-Fetch-Mode': 'navigate',
+      'Sec-Fetch-Site': 'none',
+      'Sec-Fetch-User': '?1',
+      'Upgrade-Insecure-Requests': '1',
+      'sec-ch-ua': '"Chromium";v="125", "Google Chrome";v="125", "Not-A.Brand";v="99"',
+      'sec-ch-ua-mobile': '?0',
+      'sec-ch-ua-platform': '"Windows"',
+    },
+    redirect: 'follow',
+    signal: AbortSignal.timeout(15000),
+  });
+  const body = await resp.text();
+  if (!resp.ok || body.includes('Just a moment')) return null;
+  return body;
+}
+
+async function _handleWarmEs(url, env) {
+  const baseUrl = (url.searchParams.get('base') || 'https://eurostream.ing').replace(/\/+$/, '');
+  const page = Math.max(1, parseInt(url.searchParams.get('page') || '1', 10));
+  const perPage = 100;
+
+  // Fetch one page of posts and cache the WHOLE page as one KV entry
+  const errors = [];
+  let totalPosts = 0;
+  const pageTitles = {}; // title → [{id, page}]
+
+  try {
+    const listUrl = `${baseUrl}/wp-json/wp/v2/posts?per_page=${perPage}&page=${page}&_fields=id,title,content`;
+    const body = await _esWarmFetch(listUrl);
+    if (!body) return _json({ ok: false, error: 'blocked or failed', page });
+
+    let posts;
+    try { posts = JSON.parse(body); } catch { return _json({ ok: false, error: 'invalid JSON', page }); }
+    if (!Array.isArray(posts)) return _json({ ok: false, error: 'not an array', page });
+
+    // Build batch array and titles index
+    const batch = [];
+    for (const post of posts) {
+      totalPosts++;
+      const postId = post.id;
+      const title = post.title?.rendered || '';
+      const content = post.content?.rendered || '';
+      if (!postId || !content) continue;
+
+      batch.push({ id: postId, title: { rendered: title }, content: { rendered: content } });
+
+      // Build page-level titles
+      const cleanTitle = (title || '').replace(/&#\d+;/g, (m) => String.fromCharCode(parseInt(m.slice(2, -1), 10)))
+        .replace(/&amp;/g, '&').replace(/&quot;/g, '"').replace(/&lt;/g, '<').replace(/&gt;/g, '>').trim();
+      if (cleanTitle) {
+        const key = cleanTitle.toLowerCase();
+        if (!pageTitles[key]) pageTitles[key] = [];
+        pageTitles[key].push({ id: postId, page });
+      }
+    }
+
+    // Store entire page as ONE KV entry (instead of 100 individual writes)
+    try {
+      await env.ES_CACHE.put(`es:page:${page}`, JSON.stringify(batch), { expirationTtl: _ES_KV_TTL });
+    } catch (e) { errors.push(`Batch write: ${e.message}`); }
+
+  } catch (e) {
+    errors.push(`Fetch: ${e.message}`);
+  }
+
+  return _json({
+    ok: true, page, totalPosts, totalCached: totalPosts,
+    titles: pageTitles,
+    hasMore: totalPosts >= perPage,
+    errors: errors.length > 0 ? errors : undefined,
+  });
+}
 
 /** Format proxy response for all modes (nofollow, wantCookie, passthrough). */
 function _proxyResponse(bodyText, status, location, setCookie, contentType, nofollow, wantCookie, fromCache) {
