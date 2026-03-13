@@ -642,6 +642,86 @@ async function getStreams(id, type, season, episode, providerContext = null) {
 
         console.log(`[Guardoserie] Searching for: ${searchTitles.join(' / ')} (${year})`);
 
+        // ── Strategy 0: Direct episode/movie URL construction ──────────────
+        // DooPlay themes use predictable URL patterns. Try constructing the URL
+        // directly to avoid the multi-step search→serie→episode chain.
+        // This is crucial for Vercel where the CF Worker may be CF-blocked.
+        const _buildSlugs = (titles) => {
+            const seen = new Set();
+            const slugs = [];
+            for (const t of titles) {
+                const slug = String(t || '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+                if (slug && slug.length > 1 && !seen.has(slug)) {
+                    seen.add(slug);
+                    slugs.push(slug);
+                }
+            }
+            return slugs;
+        };
+        const slugCandidates = _buildSlugs(searchTitles);
+
+        let directEpisodeUrl = null;
+        if ((type === 'tv' || type === 'series') && slugCandidates.length > 0) {
+            const s = effectiveSeason;
+            const e = effectiveEpisode;
+            for (const slug of slugCandidates.slice(0, 3)) {
+                const candidateUrl = `${getGuardoserieBaseUrl()}/episodio/${slug}-stagione-${s}-episodio-${e}/`;
+                try {
+                    const resp = await proxyFetch(candidateUrl, { headers: {
+                        'User-Agent': USER_AGENT,
+                        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+                        'Accept-Language': 'it-IT,it;q=0.9,en-US;q=0.8,en;q=0.7',
+                        'Referer': `${getGuardoserieBaseUrl()}/`
+                    } });
+                    if (resp.ok) {
+                        const html = await resp.text();
+                        const players = extractAllPlayerLinksFromHtml(html);
+                        if (players.length > 0) {
+                            directEpisodeUrl = candidateUrl;
+                            console.log(`[Guardoserie] Direct URL hit: ${candidateUrl} (${players.length} players)`);
+                            // Extract streams directly from this page
+                            const displayName = `${title} ${s}x${e}`;
+                            let streams = [];
+                            for (const { url: playerLink, label: tabLabel } of players) {
+                                const langTag = tabLabel ? ` [${tabLabel}]` : '';
+                                if (playerLink.includes('loadm')) {
+                                    const domain = 'guardoserie.horse';
+                                    const extracted = await extractLoadm(playerLink, domain);
+                                    for (const st of (extracted || [])) {
+                                        let quality = "HD";
+                                        if (st.url.includes('.m3u8')) {
+                                            const detected = await checkQualityFromPlaylist(st.url, st.headers || {});
+                                            if (detected) quality = detected;
+                                        }
+                                        streams.push(formatStream({ url: st.url, headers: st.headers, name: `Guardoserie - Loadm${langTag}`, title: displayName, quality: getQualityFromName(quality), type: "direct", addonBaseUrl: providerContext?.addonBaseUrl, behaviorHints: st.behaviorHints }, 'Guardoserie'));
+                                    }
+                                } else if (playerLink.includes('uqload')) {
+                                    const extracted = await extractUqload(playerLink);
+                                    if (extracted?.url) {
+                                        streams.push(formatStream({ url: extracted.url, headers: extracted.headers, name: `Guardoserie - Uqload${langTag}`, title: displayName, quality: getQualityFromName("HD"), type: "direct", addonBaseUrl: providerContext?.addonBaseUrl }, 'Guardoserie'));
+                                    }
+                                } else if (playerLink.includes('dropload')) {
+                                    const extracted = await extractDropLoad(playerLink);
+                                    if (extracted?.url) {
+                                        let quality = "HD";
+                                        if (extracted.url.includes('.m3u8')) {
+                                            const detected = await checkQualityFromPlaylist(extracted.url, extracted.headers || {});
+                                            if (detected) quality = detected;
+                                        }
+                                        streams.push(formatStream({ url: extracted.url, headers: extracted.headers, name: `Guardoserie - DropLoad${langTag}`, title: displayName, quality: getQualityFromName(quality), type: "direct", addonBaseUrl: providerContext?.addonBaseUrl }, 'Guardoserie'));
+                                    }
+                                }
+                            }
+                            if (streams.length > 0) {
+                                const uniqueKeys = new Set();
+                                return streams.filter(s => { const key = `${s.name}-${s.qualityTag || s.quality || 'HD'}`; if (uniqueKeys.has(key)) return false; uniqueKeys.add(key); return true; });
+                            }
+                        }
+                    }
+                } catch { /* direct URL miss */ }
+            }
+        }
+
         // Search helper – uses GET /?s= (the admin-ajax.php endpoint is broken)
         const searchProvider = async (query) => {
             const searchUrl = `${getGuardoserieBaseUrl()}/?s=${encodeURIComponent(query)}`;
