@@ -31,7 +31,7 @@
  */
 
 export default {
-  async fetch(request, env) {
+  async fetch(request, env, ctx) {
     const url = new URL(request.url);
 
     // ── CORS preflight ──────────────────────────────────────────────────────
@@ -62,6 +62,19 @@ export default {
 
     // ── Parse target URL ────────────────────────────────────────────────────
     const targetUrl = url.searchParams.get('url');
+
+    // ── KV test endpoint ────────────────────────────────────────────────────
+    if (url.searchParams.get('kv_test') === '1') {
+      try {
+        if (!env?.ES_CACHE) return _json({ error: 'ES_CACHE binding not found' });
+        await env.ES_CACHE.put('_test_key', JSON.stringify({ ok: true, ts: Date.now() }), { expirationTtl: 300 });
+        const read = await env.ES_CACHE.get('_test_key', 'json');
+        return _json({ written: true, read });
+      } catch (e) {
+        return _json({ error: e.message, stack: e.stack });
+      }
+    }
+
     if (!targetUrl) {
       return _json({ error: 'Missing required ?url= parameter' }, 400);
     }
@@ -89,6 +102,21 @@ export default {
     ]);
     if (!ALLOWED_HOSTS.has(parsedTarget.hostname)) {
       return _json({ error: `Host ${parsedTarget.hostname} is not proxied by this Worker` }, 403);
+    }
+
+    // ── ES Stream: full clicka→safego→captcha→deltabit→video extraction ────
+    // Stremio calls this URL directly; Worker runs at player's edge (not Vercel's).
+    // Returns 302 redirect to the final video MP4/M3U8 URL.
+    // Usage: ?es_stream=1&url=https://clicka.cc/delta/xxx
+    if (url.searchParams.get('es_stream') === '1') {
+      return _handleEsStream(targetUrl, url, env);
+    }
+
+    // ── ES Resolve: full clicka→safego→captcha→deltabit chain in one shot ──
+    // Usage: ?es_resolve=1&url=https://clicka.cc/delta/xxx
+    // Returns: { url: 'https://deltabit.co/xxx', cached: bool }
+    if (url.searchParams.get('es_resolve') === '1' && parsedTarget.hostname.includes('clicka')) {
+      return _handleEsResolve(targetUrl, url, env);
     }
 
     // ── Safego captcha solver mode ──────────────────────────────────────────
@@ -204,11 +232,12 @@ export default {
         } catch { /* KV read error */ }
       }
 
-      // If success and cacheable → store in KV (non-blocking)
+      // If success and cacheable → store in KV
       if (!isCfBlock && status >= 200 && status < 400 && kvKey && env?.ES_CACHE) {
-        const kvVal = JSON.stringify({ b: bodyText, s: status, l: location, ck: setCk, ct, t: Date.now() });
-        // Don't await — fire and forget
-        env.ES_CACHE.put(kvKey, kvVal, { expirationTtl: Math.max(kvTtl, 60) }).catch(() => {});
+        try {
+          const kvVal = JSON.stringify({ b: bodyText, s: status, l: location, ck: setCk, ct, t: Date.now() });
+          await env.ES_CACHE.put(kvKey, kvVal, { expirationTtl: Math.max(kvTtl, 60) });
+        } catch (kvErr) { /* KV write error — silently ignore */ }
       }
 
       return _proxyResponse(bodyText, status, location, setCk, ct, nofollow, url.searchParams.get('wantCookie') === '1', false);
@@ -525,13 +554,45 @@ async function _handleSafego(safegoUrl, reqUrl, env) {
       // Safego returns 200 + <a href="URL"> on success (NOT a 302 redirect)
       const postBody = await rPost.text();
       const linkMatch = /<a\b[^>]+href="(https?:\/\/[^"]+)"/.exec(postBody);
-      if (linkMatch) {
-        return _json({ url: linkMatch[1], attempt, answer, ocrMethod });
-      }
+      let resultUrl = linkMatch ? linkMatch[1] : null;
 
       // Fallback: 302 redirect (some versions may use this)
-      const postLoc = rPost.headers.get('Location');
-      if (postLoc) return _json({ url: new URL(postLoc, safegoUrl).href, attempt, answer, ocrMethod });
+      if (!resultUrl) {
+        const postLoc = rPost.headers.get('Location');
+        if (postLoc) resultUrl = new URL(postLoc, safegoUrl).href;
+      }
+
+      if (resultUrl) {
+        // followAll: follow redirect chain to final destination (deltabit/turbovid/mixdrop)
+        // This solves the problem of clicka.cc/adelta being blocked from some edges
+        const followAll = reqUrl.searchParams.get('followAll') === '1';
+        let finalUrl = resultUrl;
+        if (followAll) {
+          for (let hop = 0; hop < 8; hop++) {
+            if (/deltabit|turbovid|mixdrop|m1xdrop|maxstream/i.test(finalUrl)) break;
+            try {
+              const redir = await fetch(finalUrl, {
+                headers: { 'User-Agent': UA, 'Accept': '*/*' },
+                redirect: 'manual',
+              });
+              const loc = redir.headers.get('Location') || redir.headers.get('location');
+              if (!loc) break;
+              finalUrl = new URL(loc, finalUrl).href;
+            } catch { break; }
+          }
+          // Cache the delta→final mapping in KV for future use
+          if (env?.ES_CACHE && /deltabit|turbovid|mixdrop|m1xdrop/i.test(finalUrl)) {
+            // Extract original delta slug from the safego URL's referrer chain
+            const deltaUrl = reqUrl.searchParams.get('deltaUrl');
+            if (deltaUrl) {
+              try {
+                await env.ES_CACHE.put(`resolve:${deltaUrl}`, JSON.stringify({ url: finalUrl, t: Date.now() }), { expirationTtl: 86400 });
+              } catch { /* ignore */ }
+            }
+          }
+        }
+        return _json({ url: followAll ? finalUrl : resultUrl, attempt, answer, ocrMethod, ...(followAll && finalUrl !== resultUrl ? { intermediateUrl: resultUrl } : {}) });
+      }
 
       const errSnippet = postBody.substring(0, 200);
       attempts.push({ attempt, answer, ocrMethod, postStatus: rPost.status, errSnippet });
@@ -540,5 +601,214 @@ async function _handleSafego(safegoUrl, reqUrl, env) {
     return _json({ error: `Captcha unsolved after ${MAX_ATTEMPTS} attempts`, attempts }, 502);
   } catch (err) {
     return _json({ error: `Safego solver error: ${err.message}` }, 502);
+  }
+}
+
+// ─── ES Resolve: clicka.cc/delta → safego → captcha → deltabit in one shot ──
+
+async function _handleEsResolve(deltaUrl, reqUrl, env) {
+  const UA = 'Mozilla/5.0 (X11; Linux x86_64; rv:146.0) Gecko/20100101 Firefox/146.0';
+
+  // 1. Check KV cache for resolved URL
+  if (env?.ES_CACHE) {
+    try {
+      const cached = await env.ES_CACHE.get(`resolve:${deltaUrl}`, 'json');
+      if (cached && cached.url && Date.now() - cached.t < 86400000) {
+        return _json({ url: cached.url, cached: true });
+      }
+    } catch { /* ignore */ }
+  }
+
+  try {
+    let current = deltaUrl;
+
+    // 2. Follow redirects until we hit safego or a final host
+    for (let hop = 0; hop < 8; hop++) {
+      if (/deltabit|turbovid|mixdrop|m1xdrop|maxstream/i.test(current)) {
+        // Cache the successful resolution
+        if (env?.ES_CACHE) {
+          try { await env.ES_CACHE.put(`resolve:${deltaUrl}`, JSON.stringify({ url: current, t: Date.now() }), { expirationTtl: 86400 }); } catch {}
+        }
+        return _json({ url: current, cached: false });
+      }
+
+      if (current.includes('safego')) {
+        // Solve captcha with followAll to get the final URL
+        const fakeReqUrl = new URL('https://dummy/?followAll=1&deltaUrl=' + encodeURIComponent(deltaUrl));
+        const safegoResp = await _handleSafego(current, fakeReqUrl, env);
+        const safegoResult = await safegoResp.json();
+        if (safegoResult.url) {
+          return _json({ url: safegoResult.url, cached: false, captchaSolved: true, attempt: safegoResult.attempt });
+        }
+        return _json({ error: 'Captcha solve failed', details: safegoResult }, 502);
+      }
+
+      // Follow redirect
+      const resp = await fetch(current, {
+        headers: { 'User-Agent': UA, 'Accept': '*/*' },
+        redirect: 'manual',
+      });
+      const loc = resp.headers.get('Location') || resp.headers.get('location');
+      if (!loc) {
+        // Check KV for redirect location
+        if (env?.ES_CACHE) {
+          try {
+            const cachedRedir = await env.ES_CACHE.get(`p:${current}`, 'json');
+            if (cachedRedir && cachedRedir.l) {
+              current = new URL(cachedRedir.l, current).href;
+              continue;
+            }
+          } catch {}
+        }
+        return _json({ error: 'No redirect location', url: current, status: resp.status }, 502);
+      }
+      current = new URL(loc, current).href;
+    }
+
+    return _json({ error: 'Max hops reached', url: current }, 502);
+  } catch (err) {
+    return _json({ error: `ES resolve error: ${err.message}` }, 502);
+  }
+}
+
+// ─── ES Stream: full video extraction from clicka.cc/delta → MP4 URL ────────
+
+// p.a.c.k.e.r unpacker (ported from extractors/common.js)
+const _PACKER_RE = [
+  /}\('(.*)',\s*(\d+|\[\]),\s*(\d+),\s*'(.*)'\.split\('\|'\),\s*(\d+),\s*(.*)\)\)/s,
+  /}\('(.*)',\s*(\d+|\[\]),\s*(\d+),\s*'(.*)'\.split\('\|'\)/s,
+];
+function _unPack(p, a, c, k) {
+  const e = (c2) => (c2 < a ? '' : e(Math.floor(c2 / a))) + ((c2 = c2 % a) > 35 ? String.fromCharCode(c2 + 29) : c2.toString(36));
+  const d = {};
+  while (c--) { d[e(c)] = k[c] || e(c); }
+  return p.replace(/\b\w+\b/g, (m) => d[m] || m);
+}
+function _replaceLookupStrings(src) {
+  const m = /var\s*(_\w+)\s*=\s*\["(.*?)"\];/s.exec(src);
+  if (!m) return src;
+  const vals = m[2].split('","');
+  let out = src;
+  for (let i = 0; i < vals.length; i++) out = out.replaceAll(`${m[1]}[${i}]`, `"${vals[i]}"`);
+  return out.slice(m.index + m[0].length);
+}
+function _unpackPacker(html) {
+  if (!html.includes('eval(function(p,a,c,k,e,d)')) return null;
+  for (const re of _PACKER_RE) {
+    const m = re.exec(html);
+    if (!m) continue;
+    const payload = String(m[1]).replace(/\\\\/g, '\\').replace(/\\'/g, "'");
+    const radix = m[2] === '[]' ? 62 : parseInt(m[2], 10);
+    const count = parseInt(m[3], 10);
+    const symtab = String(m[4]).split('|');
+    if (!Number.isInteger(radix) || !Number.isInteger(count) || symtab.length < count) continue;
+    try { return _replaceLookupStrings(_unPack(payload, radix, count, symtab)); } catch { continue; }
+  }
+  return null;
+}
+
+async function _handleEsStream(deltaUrl, reqUrl, env) {
+  const UA = 'Mozilla/5.0 (X11; Linux x86_64; rv:146.0) Gecko/20100101 Firefox/146.0';
+
+  // Check KV for cached video URL (short TTL — tokens may expire)
+  if (env?.ES_CACHE) {
+    try {
+      const cached = await env.ES_CACHE.get(`video:${deltaUrl}`, 'json');
+      if (cached && cached.url && Date.now() - cached.t < 1800000) { // 30 min
+        return Response.redirect(cached.url, 302);
+      }
+    } catch {}
+  }
+
+  try {
+    // Phase 1: Resolve delta → deltabit URL
+    let deltabitUrl = null;
+
+    // Check KV for cached resolution
+    if (env?.ES_CACHE) {
+      try {
+        const cached = await env.ES_CACHE.get(`resolve:${deltaUrl}`, 'json');
+        if (cached && cached.url) deltabitUrl = cached.url;
+      } catch {}
+    }
+
+    if (!deltabitUrl) {
+      // Resolve live: clicka → safego → captcha → deltabit
+      const resolveResp = await _handleEsResolve(deltaUrl, reqUrl, env);
+      const resolved = await resolveResp.json();
+      if (!resolved.url || resolved.error) {
+        return _json({ error: 'Failed to resolve delta URL', details: resolved }, 502);
+      }
+      deltabitUrl = resolved.url;
+    }
+
+    // Phase 2: Follow redirects to final deltabit page
+    let pageUrl = deltabitUrl;
+    for (let i = 0; i < 5; i++) {
+      const rr = await fetch(pageUrl, {
+        headers: { 'User-Agent': UA, 'Referer': 'https://safego.cc/' },
+        redirect: 'manual',
+      });
+      const loc = rr.headers.get('Location');
+      if (!loc) break;
+      pageUrl = new URL(loc, pageUrl).href;
+    }
+
+    // Phase 3: GET deltabit page
+    const pageResp = await fetch(pageUrl, {
+      headers: {
+        'User-Agent': UA,
+        'Referer': 'https://safego.cc/',
+        'Accept': 'text/html,*/*',
+      },
+    });
+    if (!pageResp.ok) return _json({ error: 'Deltabit page fetch failed', status: pageResp.status }, 502);
+    const pageHtml = await pageResp.text();
+
+    // Phase 4: Parse form
+    const formData = {};
+    for (const m of pageHtml.matchAll(/<input\b([^>]*)>/gi)) {
+      const nameM = /\bname="([^"]+)"/.exec(m[1]);
+      const valM = /\bvalue="([^"]*)"/.exec(m[1]);
+      if (nameM) formData[nameM[1]] = valM ? valM[1] : '';
+    }
+    formData['imhuman'] = '';
+    formData['referer'] = pageUrl;
+
+    // Phase 5: Wait (deltabit enforces a JS timer)
+    await new Promise(r => setTimeout(r, 4500));
+
+    // Phase 6: POST the form
+    const postResp = await fetch(pageUrl, {
+      method: 'POST',
+      headers: {
+        'User-Agent': UA,
+        'Referer': pageUrl,
+        'Origin': new URL(pageUrl).origin,
+        'Content-Type': 'application/x-www-form-urlencoded',
+      },
+      body: new URLSearchParams(formData).toString(),
+    });
+    if (!postResp.ok) return _json({ error: 'Deltabit POST failed', status: postResp.status }, 502);
+    const postHtml = await postResp.text();
+
+    // Phase 7: Unpack p.a.c.k.e.r → extract video URL
+    const unpacked = _unpackPacker(postHtml) || postHtml;
+    const urlMatch = /sources\s*:\s*\[\s*["']([^"']+)["']\s*\]/.exec(unpacked)
+      || /sources\s*:\s*\[\s*\{\s*file\s*:\s*["']([^"']+)["']/.exec(unpacked)
+      || /file\s*:\s*["']([^"']+\.(?:m3u8|mp4)[^"']*)["']/.exec(unpacked);
+
+    if (urlMatch && urlMatch[1] && urlMatch[1].startsWith('http')) {
+      const videoUrl = urlMatch[1];
+      // Cache video URL (short TTL)
+      if (env?.ES_CACHE) {
+        try { await env.ES_CACHE.put(`video:${deltaUrl}`, JSON.stringify({ url: videoUrl, t: Date.now() }), { expirationTtl: 1800 }); } catch {}
+      }
+      return Response.redirect(videoUrl, 302);
+    }
+
+    return _json({ error: 'Video URL not found in response', htmlPreview: postHtml.substring(0, 500) }, 502);
+  } catch (err) {
+    return _json({ error: `ES stream error: ${err.message}` }, 502);
   }
 }

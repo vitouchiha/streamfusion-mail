@@ -313,10 +313,24 @@ async function scrapingLinks(atag, language, siteName, providerContext = null) {
     try {
       const href = extractHref('DeltaBit');
       if (href) {
-        const resolved = await resolveHostLink(href);
-        if (resolved) {
-          const result = await extractTurbovidda(resolved);
-          if (result) streams.push(makeStream('DeltaBit', result.url));
+        // When CF Worker is configured, return a Worker redirect URL.
+        // Stremio calls this URL directly → Worker runs at player's edge (not Vercel's)
+        // → resolves clicka→safego→captcha→deltabit→video.
+        const cfBase = (process.env.CF_WORKER_URL || '').trim();
+        const cfAuth = (process.env.CF_WORKER_AUTH || '').trim();
+        if (cfBase && href.includes('clicka.cc/delta')) {
+          const workerUrl = new URL(cfBase.replace(/\/$/, ''));
+          workerUrl.searchParams.set('es_stream', '1');
+          workerUrl.searchParams.set('url', href);
+          if (cfAuth) workerUrl.searchParams.set('auth', cfAuth);
+          streams.push(makeStream('DeltaBit', workerUrl.toString()));
+        } else {
+          // Fallback: resolve and extract locally (works when sites aren't blocked)
+          const resolved = await resolveHostLink(href);
+          if (resolved) {
+            const result = await extractTurbovidda(resolved);
+            if (result) streams.push(makeStream('DeltaBit', result.url));
+          }
         }
       }
     } catch { /* skip */ }
