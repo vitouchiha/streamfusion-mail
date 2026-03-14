@@ -353,15 +353,24 @@ async function _bypassUprot(uprotUrl, retried) {
       if (contMatch) redirect = contMatch[1];
     }
 
-    // Last resort: all uprots/uprotem URLs in clean HTML, pick unique one
+    // Last resort: all uprots/uprotem/maxstream redirect URLs in clean HTML
     if (!redirect) {
-      const allUprots = [...cleanHtml.matchAll(/href=["'](https?:\/\/[^"']*uprot(?:s|em)\/[^"']+)["']/gi)].map(m => m[1]);
+      const allUprots = [...cleanHtml.matchAll(/href=["'](https?:\/\/[^"']*(?:uprot(?:s|em)|maxstream\.video\/uprots)\/[^"']+)["']/gi)].map(m => m[1]);
       const counts = {};
       for (const u of allUprots) counts[u] = (counts[u] || 0) + 1;
       redirect = allUprots.find(u => counts[u] === 1) || null;
+      if (!redirect && allUprots.length > 0) {
+        // If no unique URL found, pick the most common (or first maxstream.video one)
+        redirect = allUprots.find(u => u.includes('maxstream.video')) || allUprots[0];
+      }
+      console.log('[Uprot] Last-resort URLs:', allUprots.length, 'unique:', redirect ? 'yes' : 'no');
     }
 
     if (!redirect) {
+      // Debug: log what we see in the response
+      const allHrefs = [...cleanHtml.matchAll(/href=["'](https?:\/\/[^"']+)["']/gi)].map(m => m[1]);
+      const videoHrefs = allHrefs.filter(u => /maxstream|uprots|uprotem/i.test(u));
+      console.log('[Uprot] Bypass debug: status', r.status, 'html', html.length, 'clean', cleanHtml.length, 'hasCaptcha:', /data:image\/png;base64/i.test(html), 'allHrefs:', allHrefs.length, 'videoHrefs:', videoHrefs.length, videoHrefs.slice(0, 3));
       if (/data:image\/png;base64/i.test(html) && !retried) {
         console.warn('[Uprot] Cookies expired on bypass, re-solving...');
         const pathType = _getPathType(uprotUrl);
