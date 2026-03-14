@@ -639,7 +639,7 @@ async function searchAnimeUnity(titles, anilistId) {
       if (!records) {
         try {
           const cfWorkerUrl = process.env.CF_WORKER_URL || "https://kisskh-proxy.vitobsfm.workers.dev";
-          const cfAuth = process.env.CF_WORKER_AUTH || "PJxVzfuySO5IkMGec1pZsFvWDNbiHRE6jULnB2t3";
+          const cfAuth = process.env.CF_WORKER_AUTH || '';
           const params = new URLSearchParams({
             url: `${base}/archivio/get-animes`,
             au_search: "1",

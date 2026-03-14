@@ -1,1 +1,0 @@
-fetch('https://streamfusion-mail.vercel.app/stream/series/tt3909224:1:1.json').then(r=>r.json()).then(d=>{console.log('Streams from Vercel:', d.streams.length); console.log(d.streams.map(s => s.title).join('\n---\n'));}).catch(console.error);

@@ -1,3 +1,24 @@
+## [3.0.60] - 2026-03-14
+
+### Security
+- **Rimosso CF_WORKER_AUTH hardcoded** — Token rimosso da `src/mapping/index.js` e `src/animeunity/index.js`. Ora usa solo `process.env.CF_WORKER_AUTH`.
+- **File .env con secret rimossi da git** — `.env.production` e `.env.vercel.prod` non più tracciati.
+- **Token sanitizzato dai docs** — Rimosso token CF Worker da `docs/copilot-memory/repo_streamfusion-mail-notes.md`.
+
+### Changed
+- **100+ file debug/test rimossi da git** — Test scripts, log, debug output non più tracciati. File locali mantenuti.
+- **.gitignore completamente riorganizzato** — Deduplicate rules, aggiunti pattern per test/debug/env, eccezioni per JSON essenziali.
+- **.env.example aggiornato** — Aggiunte 16 variabili env mancanti con documentazione.
+
+### Added
+- **docs/architecture.md** — Documentazione architettura completa del progetto.
+- **docs/memory.md** — Changelog compatto e lezioni importanti.
+- **docs/notes/** — 18 file .md con documentazione per ogni provider/servizio/estrattore.
+- **docs/fixes/README.md** — Registro cronologico dei fix principali.
+- **docs/chat-history/** — Log compattati delle sessioni di debugging.
+
+---
+
 ## [3.0.58] - 2026-03-14
 
 ### Added

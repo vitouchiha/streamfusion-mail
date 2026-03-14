@@ -1,1 +1,0 @@
-const fs=require('fs'); let c=fs.readFileSync('src/loonex/index.js','utf8'); c=c.split('const m = ep.episodeUrl.match')[0] + 'const m = ep.episodeUrl.match(/_\\\\d+x(\\\\d+)/);\\n        if (m) epNum = parseInt(m[1], 10);\\n      }' + c.split('if (m) epNum = parseInt(m[1], 10);\\n      }')[1]; fs.writeFileSync('src/loonex/index.js', c);

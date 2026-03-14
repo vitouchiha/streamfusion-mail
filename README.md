@@ -1,7 +1,7 @@
 # 🐶 Nello Stream (StreamFusion Mail)
 
 <!-- release:meta:start -->
-- Release: `v3.0.58`
+- Release: `v3.0.60`
 - Date: `2026-03-14`
 - Remote smoke target: `https://streamfusion-mail.vercel.app`
 <!-- release:meta:end -->
@@ -179,7 +179,7 @@ CF Worker → Cloudscraper → FlareSolverr → Puppeteer (Browserless)
 3. Pubblica → apri `https://<tuo-deploy>.vercel.app/configure`
 
 ```text
-https://<tuo-deploy>.vercel.app/install/v3.0.58/manifest.json
+https://<tuo-deploy>.vercel.app/install/v3.0.60/manifest.json
 ```
 
 ### Variabili d'Ambiente
@@ -188,11 +188,17 @@ https://<tuo-deploy>.vercel.app/install/v3.0.58/manifest.json
 |:----------|:------------|:---:|
 | `CF_WORKER_URL` | URL Cloudflare Worker | ✅ |
 | `CF_WORKER_AUTH` | Chiave auth CF Worker | ✅ |
+| `PROXY_URL` | Proxy HTTP/SOCKS per bypass CF | ✅ |
 | `TMDB_API_KEY` | Chiave TMDB per metadata | ⚡ Consigliata |
-| `PROXY_URL` | Proxy HTTP/SOCKS | ❌ |
-| `FLARESOLVERR_URL` | Endpoint FlareSolverr | ❌ |
+| `WEBSHARE_PROXIES` | Lista IP statici proxy (smart rotation) | ❌ |
 | `BROWSERLESS_URL` | Browserless.io WSS | ❌ |
 | `MFP_URL` | MediaFlow Proxy URL | ❌ |
+| `MFP_API_PASSWORD` | Password MediaFlow Proxy | ❌ |
+| `FLARESOLVERR_URL` | Endpoint FlareSolverr | ❌ |
+| `CONFIG_SECRET` | Segreto cifratura config utente | ⚠️ Produzione |
+| `HLS_PROXY_SECRET` | Segreto HMAC token HLS proxy | ⚠️ Produzione |
+| `CRON_SECRET` | Segreto endpoint cron | ❌ |
+| `DEBUG_TOKEN` | Token endpoint debug | ❌ |
 
 ---
 

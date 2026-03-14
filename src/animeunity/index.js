@@ -339,7 +339,7 @@ async function fetchResource(url, options = {}) {
       if (htmlText === null && url.includes("animeunity")) {
         try {
           const cfWorkerUrl = process.env.CF_WORKER_URL || "https://kisskh-proxy.vitobsfm.workers.dev";
-          const cfAuth = process.env.CF_WORKER_AUTH || "PJxVzfuySO5IkMGec1pZsFvWDNbiHRE6jULnB2t3";
+          const cfAuth = process.env.CF_WORKER_AUTH || '';
           const proxyResp = await fetchWithTimeout(
             `${cfWorkerUrl}?url=${encodeURIComponent(url)}&auth=${encodeURIComponent(cfAuth)}`,
             { method: "GET", headers: { "user-agent": USER_AGENT } },

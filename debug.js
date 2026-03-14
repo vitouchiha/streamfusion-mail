@@ -1,1 +1,0 @@
-const to = require('./src/toonitalia/index.js'); (async () => { const og = global.console.log; global.console.log = (...args) => og('[DEBUG]', ...args); console.log(await to.getStreams('tt0330592', 'series', 1, 1)); })();

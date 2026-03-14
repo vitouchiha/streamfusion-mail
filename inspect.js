@@ -1,1 +1,0 @@
-const fs = require('fs'); let c = fs.readFileSync('src/toonitalia/index.js','utf8'); c = c.replace('const nonDvdSections = sections.filter(s => !s.isDvd);', 'const nonDvdSections = sections.filter(s => !s.isDvd); console.log(\\'sectionsToUse len:\\', sections.length, sections.map(s => s.text));'); fs.writeFileSync('src/toonitalia/index.js', c);
