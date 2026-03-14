@@ -146,12 +146,12 @@ async function searchSeries(showname, year) {
     const cardRe = /<div[^>]+class="card-content"([\s\S]*?)<\/div>/gi;
     for (const card of html.matchAll(cardRe)) {
       const cardHtml = card[1];
-      const hrefMatch = /href="([^"]+)"/.exec(cardHtml);
+      const hrefMatch = /href=["']([^"']+)["']/.exec(cardHtml);
       if (!hrefMatch) continue;
       const href = hrefMatch[1];
 
-      // Year is in a <span style="color..."> element
-      const spanMatch = /<span[^>]+style="[^"]*color[^"]*"[^>]*>([\s\S]*?)<\/span>/i.exec(cardHtml);
+      // Year is in a <span style="color..."> element (single or double quotes)
+      const spanMatch = /<span[^>]+style=["'][^"']*color[^"']*["'][^>]*>([\s\S]*?)<\/span>/i.exec(cardHtml);
       if (!spanMatch) continue;
       const yearMatch = yearPattern.exec(spanMatch[1]);
       if (!yearMatch) continue;
@@ -299,27 +299,38 @@ async function extractSeriesStreams(pageUrl, season, episode, providerContext = 
     // Find all season accordion headers: <div class="sp-head">STAGIONE N</div>
     const spHeadRe = /<div[^>]+class="sp-head"[^>]*>([\s\S]*?)<\/div>/gi;
 
+    // Helper: extract the line/block for an episode and try ALL links in it
+    const tryAllLinksInBlock = async (block) => {
+      const linkRe = /href=["']([^"']+)["']/gi;
+      for (const lm of block.matchAll(linkRe)) {
+        const s = await extractEpisodeStreams(lm[1], providerContext);
+        if (s.length) return s;
+      }
+      return [];
+    };
+
     // Also try simpler flat episode patterns in the full HTML
-    // Pattern 1: {season}&#215;{ep} – <a href='...'
+    // Pattern 1: {season}&#215;{ep} – grab the line until next episode or </p>
     const flatPattern1 = new RegExp(
-      `${seasonStr}&#215;${episodePadded}[\\s\\S]*?href='([^']+)'`,
+      `${seasonStr}&#215;${episodePadded}[\\s\\S]*?(?=\\d+&#215;\\d+|</p>|$)`,
       'i'
     );
     const flatMatch1 = flatPattern1.exec(html);
-    if (flatMatch1 && flatMatch1[1]) {
-      const s = await extractEpisodeStreams(flatMatch1[1], providerContext);
+    if (flatMatch1) {
+      const s = await tryAllLinksInBlock(flatMatch1[0]);
       if (s.length) return s;
     }
 
-    // Pattern 2: S{ss}E{ep} or {s}x{ep} href
+    // Pattern 2: S{ss}E{ep} or {s}x{ep} – grab the line until next episode or </p>
     const epStr = episodePadded;
+    const seasonPadded = seasonStr.padStart(2, '0');
     const flatPattern2 = new RegExp(
-      `(?:S${epStr.padStart(2, '0')}E${epStr}|${seasonStr}x${epStr})[\\s\\S]*?href='([^']+)'`,
+      `(?:S${seasonPadded}E${epStr}|${seasonStr}x${epStr})[\\s\\S]*?(?=S\\d+E\\d+|\\d+x\\d+|</p>|$)`,
       'i'
     );
     const flatMatch2 = flatPattern2.exec(html);
-    if (flatMatch2 && flatMatch2[1]) {
-      const s = await extractEpisodeStreams(flatMatch2[1], providerContext);
+    if (flatMatch2) {
+      const s = await tryAllLinksInBlock(flatMatch2[0]);
       if (s.length) return s;
     }
 
@@ -344,19 +355,19 @@ async function extractSeriesStreams(pageUrl, season, episode, providerContext = 
       if (!coversOurSeason) continue;
 
       // Find the associated content block. Try fetching the link inside sp-head.
-      const hrefInHead = /href="([^"]+)"/.exec(headMatch[0]);
+      const hrefInHead = /href=["']([^"']+)["']/.exec(headMatch[0]);
       if (hrefInHead) {
         try {
           const subHtml = await fetchWithCloudscraper(hrefInHead[1], { referer: pageUrl });
           if (subHtml) {
             const epPatterns = [
-              new RegExp(`(?:S${epStr.padStart(2, '0')}|${seasonStr}x)${epStr}[\\s\\S]*?href='([^']+)'`, 'i'),
-              new RegExp(`${seasonStr}&#215;${epStr}[\\s\\S]*?href='([^']+)'`, 'i'),
+              new RegExp(`(?:S${seasonPadded}E|${seasonStr}x)${epStr}[\\s\\S]*?(?=(?:S\\d+E|\\d+x)\\d+|</p>|$)`, 'i'),
+              new RegExp(`${seasonStr}&#215;${epStr}[\\s\\S]*?(?=\\d+&#215;\\d+|</p>|$)`, 'i'),
             ];
             for (const pat of epPatterns) {
               const m = pat.exec(subHtml);
-              if (m && m[1]) {
-                const s = await extractEpisodeStreams(m[1], providerContext);
+              if (m) {
+                const s = await tryAllLinksInBlock(m[0]);
                 if (s.length) return s;
               }
             }

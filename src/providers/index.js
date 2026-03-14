@@ -356,7 +356,7 @@ async function _fetchFromImdbId(rawId, type, config) {
         primaryTitle: titleCandidates[0] || title,
         titleCandidates,
       }
-    ), 50_000)); // Guardaserie on Vercel can legitimately take ~35-45s when SuperVideo requires browser capture
+    ), 25_000)); // Reduced: absolute cap is now 20s + buffer
   }
 
   // Legacy stream_engine is experimental and still includes mock adapters.

@@ -105,7 +105,7 @@ async function extractEpisodes(contentUrl, tmdbSeasonCount, preferredSection) {
         const seasonHeadings = [];
         entryContent.find("h3, h4, strong, b, p").each((_, el) => {
             const text = $(el).text().trim();
-            const seasonPattern = /(\\d+)[ªº°]\\s*(?:stagione|season|parte)|(?:stagione|season|parte|серия)\\s*(\\d+)/i;
+            const seasonPattern = /(\d+)[ªº°]\s*(?:stagione|season|parte)|(?:stagione|season|parte|серия)\s*(\d+)/i;
             const match = text.match(seasonPattern);
             if (match) {
                 const seasonNum = parseInt(match[1] || match[2]);
@@ -201,7 +201,7 @@ async function extractEpisodes(contentUrl, tmdbSeasonCount, preferredSection) {
             }
         }
         
-        console.log("voeLinks count inside index.js:", voeLinks.length);
+        
 voeLinks.each((_, el) => {
             const voeUrl = currentContext(el).attr("href");
             if (!voeUrl) /*return*/;
@@ -213,31 +213,31 @@ voeLinks.each((_, el) => {
             
             const startIndex = Math.max(0, linkHrefIndex - 200);
             const textBeforeLink = parentHtml.substring(startIndex, linkHrefIndex);
-            if (/\\bdvd\\b/i.test(textBeforeLink)) return;
+            if (/\bdvd\b/i.test(textBeforeLink)) return;
             
             const cleanText = textBeforeLink.replace(/<[^>]*>/g, " ").trim();
-if (_.valueOf() === 1) console.log("CHARS:", cleanText.split("").map(c => c.charCodeAt(0)));
-            let seasonMatch = cleanText.match(/(?:stagione|season|s)?[\\s\\-]*(\\d+)[\\s]*[�x\\-][\\s]*(?:episodio|episode|ep|e)?[\\s]*(\\d+)/i);
+            // Use last match — text before the link may contain multiple previous episodes
+            const seasonMatches = [...cleanText.matchAll(/(?:stagione|season|s)?[\s\-]*(\d+)[\s]*[\u00D7x\-][\s]*(?:episodio|episode|ep|e)?[\s]*(\d+)/gi)];
+            let seasonMatch = seasonMatches.length > 0 ? seasonMatches[seasonMatches.length - 1] : null;
             if (seasonMatch) {
                 episodes.push({ season: seasonMatch[1].padStart(2, "0"), episode: seasonMatch[2].padStart(2, "0"), voeUrl });
                 return;
             }
-            const threeDigitMatch = cleanText.match(/\\b(\\d{3})\\b/);
+            const threeDigitMatch = cleanText.match(/\b(\d{3})\b/);
             if (threeDigitMatch) {
                 const episode = threeDigitMatch[1];
                 const seasonFromMap = voeToSeasonMap.get(voeUrl);
                 episodes.push(seasonFromMap ? { season: seasonFromMap, episode, voeUrl } : { episode, voeUrl });
                 return;
             }
-            const episodeWordMatch = cleanText.match(/(?:episodio|episode|ep|puntata)[- \\s:]*(\\d+)/i);
+            const episodeWordMatch = cleanText.match(/(?:episodio|episode|ep|puntata)[- \s:]*(\d+)/i);
             if (episodeWordMatch) {
                 const episode = episodeWordMatch[1].padStart(3, "0");
                 const seasonFromMap = voeToSeasonMap.get(voeUrl);
                 episodes.push(seasonFromMap ? { season: seasonFromMap, episode, voeUrl } : { episode, voeUrl });
                 return;
             }
-            const anyNumberMatch = cleanText.match(/(?:^|\s)(\d{1,3})(?:\s|-|–|$)/);
-            if (_.valueOf() === 1) console.log("anyNumberMatch:", anyNumberMatch);
+            const anyNumberMatch = cleanText.match(/(?:^|\s)(\d{1,3})(?:\s|-|\u2013|$)/);
             if (anyNumberMatch) {
                 const episode = anyNumberMatch[1].padStart(3, "0");
                 const seasonFromMap = voeToSeasonMap.get(voeUrl);
@@ -253,7 +253,6 @@ if (_.valueOf() === 1) console.log("CHARS:", cleanText.split("").map(c => c.char
 }
 
 async function getStreams(id, type, season, episode, providerContext = null) {
-console.log('GET STREAMS', id);
     if (String(type).toLowerCase() === "movie") return [];
     try {
         let cleanId = id.toString();
@@ -267,13 +266,13 @@ console.log('GET STREAMS', id);
         let tmdbSeasonCount = 1;
         let contentUrl;
         
-        const contextTmdbId = providerContext && /^\\d+$/.test(String(providerContext.tmdbId || "")) ? String(providerContext.tmdbId) : null;
-        const contextImdbId = providerContext && /^tt\\d+$/i.test(String(providerContext.imdbId || "")) ? String(providerContext.imdbId) : null;
+        const contextTmdbId = providerContext && /^\d+$/.test(String(providerContext.tmdbId || "")) ? String(providerContext.tmdbId) : null;
+        const contextImdbId = providerContext && /^tt\d+$/i.test(String(providerContext.imdbId || "")) ? String(providerContext.imdbId) : null;
         
         if (contextTmdbId) tmdbId = contextTmdbId;
         if (contextImdbId) imdbId = contextImdbId;
         if (cleanId.startsWith("tt")) imdbId = cleanId;
-        else if (/^\\d+$/.test(cleanId)) tmdbId = cleanId;
+        else if (/^\d+$/.test(cleanId)) tmdbId = cleanId;
 
         // Ensure effective season/episode
         let effectiveSeason = Number.parseInt(String(season || ""), 10);
@@ -305,15 +304,12 @@ console.log('GET STREAMS', id);
         
         if (!seriesName && !contentUrl) return [];
         
-        console.log('seriesName', seriesName, 'contentUrl', contentUrl);
 if (!contentUrl) {
             contentUrl = await searchContent(seriesName);
             if (!contentUrl) return [];
         }
-        
-        console.log('extracting episodes from', contentUrl);
-const episodes = await extractEpisodes(contentUrl, tmdbSeasonCount, preferredSection);
-console.log('found eps length:', episodes.length);
+
+        const episodes = await extractEpisodes(contentUrl, tmdbSeasonCount, preferredSection);
         if (episodes.length === 0) return [];
         
         const seasonEpisodes = episodes.filter(ep => ep.season !== undefined);

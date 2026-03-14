@@ -634,6 +634,20 @@ app.get('/debug/cf-guardoserie', requireDebugAuth, async (req, res) => {
   res.json(result);
 });
 
+app.get('/debug/gs-test', requireDebugAuth, async (req, res) => {
+  const cfBase = (process.env.CF_WORKER_URL || '').trim().replace(/\/$/, '');
+  const cfAuth = (process.env.CF_WORKER_AUTH || '').trim();
+  const gsUrl = req.query.gs_url || 'https://guardoserie.digital/?s=breaking+bad';
+  const workerUrl = `${cfBase}/?gs_test=1&gs_url=${encodeURIComponent(gsUrl)}`;
+  try {
+    const headers = { 'Accept': 'application/json' };
+    if (cfAuth) headers['x-worker-auth'] = cfAuth;
+    const r = await fetch(workerUrl, { headers, signal: AbortSignal.timeout(30000) });
+    const data = await r.json();
+    res.json({ workerStatus: r.status, ...data });
+  } catch (e) { res.json({ error: e.message }); }
+});
+
 app.get('/debug/providers-stream', requireDebugAuth, async (req, res) => {
   const raw = String(req.query.id || req.query.imdb || 'tt0944947:1:1').trim();
   const type = String(req.query.type || 'series').toLowerCase() === 'movie' ? 'movie' : 'series';

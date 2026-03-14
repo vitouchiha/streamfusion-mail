@@ -348,19 +348,19 @@ async function getStreams(id, type, season, episode, config = {}) {
               continue;
           }
           if (providerName === 'streamingcommunity') {
-              promises.push(withProviderTimeout('StreamingCommunity', streamingcommunity.getStreams(id, normalizedType, effectiveSeason, normalizedEpisode, sharedContext), 14000));
+              promises.push(withProviderTimeout('StreamingCommunity', streamingcommunity.getStreams(id, normalizedType, effectiveSeason, normalizedEpisode, sharedContext), 8000));
               continue;
           }
           if (providerName === 'guardahd') {
-              promises.push(withProviderTimeout('GuardaHD', withMfp('guardahd', guardahd.getStreams(id, normalizedType, effectiveSeason, normalizedEpisode, ctxFor('guardahd'))), 22000));
+              promises.push(withProviderTimeout('GuardaHD', withMfp('guardahd', guardahd.getStreams(id, normalizedType, effectiveSeason, normalizedEpisode, ctxFor('guardahd'))), 12000));
               continue;
           }
           if (providerName === 'guardaserie') {
-              promises.push(withProviderTimeout('Guardaserie', withMfp('guardaserie', guardaserie.getStreams(id, normalizedType, effectiveSeason, normalizedEpisode, ctxFor('guardaserie'))), 45000));
+              promises.push(withProviderTimeout('Guardaserie', withMfp('guardaserie', guardaserie.getStreams(id, normalizedType, effectiveSeason, normalizedEpisode, ctxFor('guardaserie'))), 15000));
               continue;
           }
           if (providerName === 'animeunity') {
-              promises.push(withProviderTimeout('AnimeUnity', withMfp('animeunity', animeunity.getStreams(id, normalizedType, effectiveSeason, normalizedEpisode, ctxFor('animeunity'))), 25000));
+              promises.push(withProviderTimeout('AnimeUnity', withMfp('animeunity', animeunity.getStreams(id, normalizedType, effectiveSeason, normalizedEpisode, ctxFor('animeunity'))), 15000));
               continue;
           }
           if (providerName === 'animeworld') {
@@ -372,19 +372,19 @@ async function getStreams(id, type, season, episode, config = {}) {
               continue;
           }
           if (providerName === 'toonitalia') {
-                promises.push(withProviderTimeout('ToonItalia', toonitalia.getStreams(id, normalizedType, effectiveSeason, normalizedEpisode, sharedContext), 8000));
+                promises.push(withProviderTimeout('ToonItalia', toonitalia.getStreams(id, normalizedType, effectiveSeason, normalizedEpisode, sharedContext), 12000));
                 continue;
             }
             if (providerName === 'cb01') {
-              promises.push(withProviderTimeout('CB01', withMfp('cb01', cb01.getStreams(id, normalizedType, effectiveSeason, normalizedEpisode, ctxFor('cb01'))), 25000));
+              promises.push(withProviderTimeout('CB01', withMfp('cb01', cb01.getStreams(id, normalizedType, effectiveSeason, normalizedEpisode, ctxFor('cb01'))), 12000));
                 continue;
             }
             if (providerName === 'eurostreaming') {
-              promises.push(withProviderTimeout('Eurostreaming', eurostreaming.getStreams(id, normalizedType, effectiveSeason, normalizedEpisode, sharedContext), 40000));
+              promises.push(withProviderTimeout('Eurostreaming', eurostreaming.getStreams(id, normalizedType, effectiveSeason, normalizedEpisode, sharedContext), 15000));
                 continue;
             }
             if (providerName === 'guardaflix') {
-                promises.push(withProviderTimeout('Guardaflix', withMfp('guardaflix', guardaflix.getStreams(id, normalizedType, effectiveSeason, normalizedEpisode, ctxFor('guardaflix'))), 20000));
+                promises.push(withProviderTimeout('Guardaflix', withMfp('guardaflix', guardaflix.getStreams(id, normalizedType, effectiveSeason, normalizedEpisode, ctxFor('guardaflix'))), 12000));
                 continue;
             }
             if (providerName === 'loonex') {
@@ -392,7 +392,7 @@ async function getStreams(id, type, season, episode, config = {}) {
                 continue;
             }
             if (providerName === 'guardoserie') {
-              promises.push(withProviderTimeout('Guardoserie', withMfp('guardoserie', guardoserie.getStreams(id, normalizedType, effectiveSeason, normalizedEpisode, ctxFor('guardoserie'))), 30000));
+              promises.push(withProviderTimeout('Guardoserie', withMfp('guardoserie', guardoserie.getStreams(id, normalizedType, effectiveSeason, normalizedEpisode, ctxFor('guardoserie'))), 15000));
         }
     }
 
@@ -403,15 +403,25 @@ async function getStreams(id, type, season, episode, config = {}) {
     const allStreams = [];
     const settled = new Map();
 
-    const ABSOLUTE_CAP_MS = 50000; // never wait more than 50s total (Vercel maxDuration=60s)
-    const GRACE_AFTER_FIRST_MS = 35000; // 35s grace after first streams arrive
+    const ABSOLUTE_CAP_MS = 20000; // never wait more than 20s total
+    const GRACE_AFTER_FIRST_MS = 5000; // 5s grace after first streams arrive
+    const MIN_WAIT_MS = 8000; // always wait at least 8s for slower providers
 
     await new Promise((resolveAll) => {
       let resolved = false;
-      const finish = () => { if (!resolved) { resolved = true; resolveAll(); } };
+      const startTime = Date.now();
+      const finish = () => {
+        if (!resolved && Date.now() - startTime >= MIN_WAIT_MS) {
+          resolved = true; resolveAll();
+        } else if (!resolved) {
+          // Schedule finish after MIN_WAIT_MS
+          setTimeout(() => { if (!resolved) { resolved = true; resolveAll(); } }, MIN_WAIT_MS - (Date.now() - startTime));
+        }
+      };
+      const forceFinish = () => { if (!resolved) { resolved = true; resolveAll(); } };
 
       // Hard cap: always resolve after ABSOLUTE_CAP_MS
-      const capTimeout = setTimeout(finish, ABSOLUTE_CAP_MS);
+      const capTimeout = setTimeout(forceFinish, ABSOLUTE_CAP_MS);
 
       let graceTimeout = null;
 
@@ -426,11 +436,11 @@ async function getStreams(id, type, season, episode, config = {}) {
               graceTimeout = setTimeout(finish, GRACE_AFTER_FIRST_MS);
             }
           }
-          // All done? Resolve immediately
+          // All done? Resolve immediately (bypass MIN_WAIT)
           if (settled.size >= promises.length) {
             clearTimeout(capTimeout);
             if (graceTimeout) clearTimeout(graceTimeout);
-            finish();
+            forceFinish();
           }
         });
       }
@@ -439,7 +449,7 @@ async function getStreams(id, type, season, episode, config = {}) {
       Promise.all(promises).then(() => {
         clearTimeout(capTimeout);
         if (graceTimeout) clearTimeout(graceTimeout);
-        finish();
+        forceFinish();
       });
     });
 

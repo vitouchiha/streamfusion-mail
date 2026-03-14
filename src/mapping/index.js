@@ -218,9 +218,8 @@ async function resolveKitsuIdFromTmdb(tmdbId) {
     if (kitsuId) return cacheSet(key, kitsuId);
   }
 
-  // Fallback: search Kitsu by TMDB title
-  const kitsuIdByTitle = await searchKitsuByTmdbTitle(tmdbId);
-  if (kitsuIdByTitle) return cacheSet(key, kitsuIdByTitle);
+  // NOTE: searchKitsuByTmdbTitle removed — too many false positives for
+  // non-anime titles. The Fribb offline list + external-id lookups are sufficient.
 
   return cacheSet(key, null);
 }
@@ -263,7 +262,9 @@ async function searchKitsuByTmdbTitle(tmdbId) {
       ].filter(Boolean).map(t => t.toLowerCase().replace(/[^a-z0-9]+/g, ""));
 
       for (const cand of candidateTitles) {
-        if (cand === normalizedSearch || cand.includes(normalizedSearch) || normalizedSearch.includes(cand)) {
+        // Strict: exact match only — substring matching causes false positives
+        // (e.g. "Mare Fuori" matching "Shimajirou to Sora Tobu Fune")
+        if (cand === normalizedSearch) {
           return cacheSet(key, String(anime.id));
         }
       }
@@ -1000,10 +1001,9 @@ async function resolveByImdb(imdbId, options = {}) {
           kitsuId = await findKitsuIdByExternalId("tvdb", String(movieExt.tvdb_id));
         }
       }
-      // Last resort: search Kitsu by TMDB title
-      if (!kitsuId) {
-        kitsuId = await searchKitsuByTmdbTitle(resolvedTmdbId);
-      }
+      // NOTE: searchKitsuByTmdbTitle removed here — too many false positives
+      // for non-anime titles (e.g. "Mare Fuori" → Kitsu 42652 Shimajirou).
+      // The Fribb offline list is the authoritative anime identifier.
     }
   }
 

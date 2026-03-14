@@ -68,6 +68,105 @@ export default {
     // ── Parse target URL ────────────────────────────────────────────────────
     const targetUrl = url.searchParams.get('url');
 
+    // ── GuardoSerie warm-up: fetch + cache list of URLs in KV ─────────────
+    if (url.searchParams.get('gs_warm') === '1') {
+      if (!env?.ES_CACHE) return _json({ error: 'KV not available' }, 500);
+      const urls = url.searchParams.getAll('u');
+      if (!urls.length) return _json({ error: 'Pass ?u=URL1&u=URL2 to warm' }, 400);
+      const results = [];
+      for (const u of urls.slice(0, 20)) { // max 20 URLs per call
+        const kvKey = `p:${u}`;
+        try {
+          // Check if already cached and fresh
+          const existing = await env.ES_CACHE.get(kvKey, 'json');
+          if (existing && existing.t && (Date.now() - existing.t < 43200000)) { // 12h fresh
+            results.push({ url: u, status: 'cached', age: Math.round((Date.now() - existing.t) / 1000) });
+            continue;
+          }
+          const resp = await fetch(u, {
+            headers: {
+              'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+              'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+              'Accept-Language': 'it-IT,it;q=0.9,en-US;q=0.8,en;q=0.7',
+              'Sec-Fetch-Dest': 'document',
+              'Sec-Fetch-Mode': 'navigate',
+              'Sec-Fetch-Site': 'none',
+            },
+            redirect: 'follow',
+            signal: AbortSignal.timeout(15000),
+          });
+          const body = await resp.text();
+          const isCf = body.includes('Just a moment') || body.includes('Checking your browser');
+          if (resp.ok && !isCf) {
+            const kvVal = JSON.stringify({ b: body, s: resp.status, l: '', ck: '', ct: resp.headers.get('Content-Type') || 'text/html', t: Date.now() });
+            await env.ES_CACHE.put(kvKey, kvVal, { expirationTtl: 86400 });
+            results.push({ url: u, status: 'ok', size: body.length, hasIframes: body.includes('iframe') });
+          } else {
+            results.push({ url: u, status: 'blocked', httpStatus: resp.status, cf: isCf });
+          }
+        } catch (e) { results.push({ url: u, status: 'error', msg: e.message }); }
+      }
+      return _json({ warmed: results.filter(r => r.status === 'ok').length, cached: results.filter(r => r.status === 'cached').length, total: results.length, results });
+    }
+
+    // ── GuardoSerie fetch test: test various fetch approaches ─────────────
+    if (url.searchParams.get('gs_test') === '1') {
+      const gsUrl = url.searchParams.get('gs_url') || 'https://guardoserie.digital/?s=breaking+bad';
+      const results = {};
+      
+      // Approach 1: minimal headers
+      try {
+        const t0 = Date.now();
+        const r1 = await fetch(gsUrl, { headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36', 'Accept': 'text/html, */*' } });
+        const b1 = await r1.text();
+        results.minimal = { status: r1.status, ms: Date.now()-t0, len: b1.length, cf: b1.includes('Just a moment'), serie: b1.includes('/serie/') };
+      } catch (e) { results.minimal = { error: e.message }; }
+      
+      // Approach 2: full browser headers  
+      try {
+        const t0 = Date.now();
+        const r2 = await fetch(gsUrl, { headers: {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+          'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
+          'Accept-Language': 'it-IT,it;q=0.9,en-US;q=0.8,en;q=0.7',
+          'Accept-Encoding': 'gzip, deflate, br',
+          'Cache-Control': 'no-cache',
+          'Sec-Fetch-Dest': 'document',
+          'Sec-Fetch-Mode': 'navigate',
+          'Sec-Fetch-Site': 'none',
+          'Sec-Fetch-User': '?1',
+          'Upgrade-Insecure-Requests': '1',
+          'sec-ch-ua': '"Chromium";v="124", "Google Chrome";v="124", "Not-A.Brand";v="99"',
+          'sec-ch-ua-mobile': '?0',
+          'sec-ch-ua-platform': '"Windows"',
+        }});
+        const b2 = await r2.text();
+        results.browser = { status: r2.status, ms: Date.now()-t0, len: b2.length, cf: b2.includes('Just a moment'), serie: b2.includes('/serie/') };
+      } catch (e) { results.browser = { error: e.message }; }
+
+      // Approach 3: with CDN cache enabled
+      try {
+        const t0 = Date.now();
+        const r3 = await fetch(gsUrl, { 
+          headers: {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+            'Accept-Language': 'it-IT,it;q=0.9,en-US;q=0.8,en;q=0.7',
+            'Sec-Fetch-Dest': 'document',
+            'Sec-Fetch-Mode': 'navigate',
+          },
+          cf: { cacheEverything: true, cacheTtlByStatus: { '200-299': 86400, '400-599': 0 } }
+        });
+        const b3 = await r3.text();
+        results.cdnCache = { status: r3.status, ms: Date.now()-t0, len: b3.length, cf: b3.includes('Just a moment'), serie: b3.includes('/serie/'), cfCache: r3.headers.get('CF-Cache-Status') };
+      } catch (e) { results.cdnCache = { error: e.message }; }
+
+      // Info: CF POP location
+      results.cfPop = url.searchParams.get('_cf_pop') || 'unknown';
+
+      return _json(results);
+    }
+
     // ── KV test endpoint ────────────────────────────────────────────────────
     if (url.searchParams.get('kv_test') === '1') {
       try {
@@ -226,8 +325,9 @@ export default {
       'Referer':         referer,
       'Origin':          origin,
     };
-    // Full browser headers for Cloudflare-protected sites (eurostream + clicka)
-    if (isEurostream || isClicka) {
+    // Full browser headers for Cloudflare-protected sites (eurostream, clicka, guardoserie)
+    if (isEurostream || isClicka || isGuardoserie) {
+      headers['Accept'] = 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8';
       headers['Accept-Encoding'] = 'gzip, deflate, br';
       headers['Cache-Control'] = 'no-cache';
       headers['Pragma'] = 'no-cache';
@@ -261,12 +361,17 @@ export default {
 
     // ── Proxy request ───────────────────────────────────────────────────────
     try {
+      // For guardoserie: enable CDN edge cache for 200s (survives across Worker invocations at the same POP)
+      const cfOpts = isGuardoserie
+        ? { cacheEverything: true, cacheTtlByStatus: { '200-299': 86400, '300-399': 0, '400-599': 0 } }
+        : { cacheEverything: false };
+
       const resp = await fetch(targetUrl, {
         method: isPost ? 'POST' : 'GET',
         headers,
         body: isPost ? (url.searchParams.get('body') || '') : undefined,
         redirect: nofollow ? 'manual' : 'follow',
-        cf: { cacheEverything: false },
+        cf: cfOpts,
       });
 
       // Read response once
@@ -290,11 +395,15 @@ export default {
         } catch { /* KV read error */ }
       }
 
-      // If success and cacheable → store in KV
+      // If success and cacheable → store in KV (skip if already cached and fresh)
       if (!isCfBlock && status >= 200 && status < 400 && kvKey && env?.ES_CACHE) {
         try {
-          const kvVal = JSON.stringify({ b: bodyText, s: status, l: location, ck: setCk, ct, t: Date.now() });
-          await env.ES_CACHE.put(kvKey, kvVal, { expirationTtl: Math.max(kvTtl, 60) });
+          const existing = await env.ES_CACHE.get(kvKey, 'json');
+          const isFresh = existing && existing.t && (Date.now() - existing.t < kvTtl * 500); // refresh at half TTL
+          if (!isFresh) {
+            const kvVal = JSON.stringify({ b: bodyText, s: status, l: location, ck: setCk, ct, t: Date.now() });
+            await env.ES_CACHE.put(kvKey, kvVal, { expirationTtl: Math.max(kvTtl, 60) });
+          }
         } catch (kvErr) { /* KV write error — silently ignore */ }
       }
 
@@ -490,11 +599,32 @@ async function _handleWarmEs(url, env) {
 
 const _WARM_PAGES_PER_RUN = 10;
 const _WARM_COOLDOWN_MS = 24 * 3600 * 1000; // 24h between full refreshes
+const _WARM_STATE_CACHE_KEY = 'https://internal.worker/es-warm-state'; // Cache API key (fake URL)
+
+// Use Cache API for state (no daily write limits, unlike KV)
+async function _getWarmState() {
+  try {
+    const cache = caches.default;
+    const resp = await cache.match(_WARM_STATE_CACHE_KEY);
+    if (resp) return await resp.json();
+  } catch { /* cache miss */ }
+  return { nextPage: 1, titles: {}, lastComplete: 0 };
+}
+
+async function _putWarmState(state) {
+  try {
+    const cache = caches.default;
+    const resp = new Response(JSON.stringify(state), {
+      headers: { 'Content-Type': 'application/json', 'Cache-Control': 'max-age=172800' }, // 48h
+    });
+    await cache.put(_WARM_STATE_CACHE_KEY, resp);
+  } catch { /* ignore */ }
+}
 
 async function _handleScheduledWarm(env) {
   if (!env?.ES_CACHE) return;
 
-  const state = await env.ES_CACHE.get('es:warm:state', 'json') || { nextPage: 1, titles: {}, lastComplete: 0 };
+  const state = await _getWarmState();
 
   // Don't refresh more often than every 24h
   if (state.lastComplete && Date.now() - state.lastComplete < _WARM_COOLDOWN_MS) return;
@@ -509,14 +639,14 @@ async function _handleScheduledWarm(env) {
       const listUrl = `${baseUrl}/wp-json/wp/v2/posts?per_page=100&page=${nextPage}&_fields=id,title,content`;
       const body = await _esWarmFetch(listUrl);
       if (!body) { /* blocked — save progress and retry next cron */
-        await env.ES_CACHE.put('es:warm:state', JSON.stringify({ nextPage, titles, lastComplete: 0 }), { expirationTtl: _ES_KV_TTL });
+        await _putWarmState({ nextPage, titles, lastComplete: 0 });
         return;
       }
       posts = JSON.parse(body);
     } catch { break; }
     if (!Array.isArray(posts) || posts.length === 0) { posts = []; }
 
-    // Store batch in KV
+    // Store batch in KV (skip if already cached and fresh)
     if (posts.length > 0) {
       const batch = posts.map(p => ({
         id: p.id,
@@ -524,7 +654,10 @@ async function _handleScheduledWarm(env) {
         content: { rendered: p.content?.rendered || '' },
       }));
       try {
-        await env.ES_CACHE.put(`es:page:${nextPage}`, JSON.stringify(batch), { expirationTtl: _ES_KV_TTL });
+        const existing = await env.ES_CACHE.get(`es:page:${nextPage}`, 'json');
+        if (!existing || !Array.isArray(existing) || existing.length !== batch.length) {
+          await env.ES_CACHE.put(`es:page:${nextPage}`, JSON.stringify(batch), { expirationTtl: _ES_KV_TTL });
+        }
       } catch { /* KV write failed — continue */ }
 
       // Accumulate titles
@@ -543,14 +676,14 @@ async function _handleScheduledWarm(env) {
     // Last page reached
     if (posts.length < 100) {
       try { await env.ES_CACHE.put('es:titles', JSON.stringify(titles), { expirationTtl: _ES_KV_TTL }); } catch {}
-      await env.ES_CACHE.put('es:warm:state', JSON.stringify({ nextPage: 1, titles: {}, lastComplete: Date.now() }), { expirationTtl: _ES_KV_TTL });
+      await _putWarmState({ nextPage: 1, titles: {}, lastComplete: Date.now() });
       return;
     }
     nextPage++;
   }
 
-  // More pages remain — save progress
-  await env.ES_CACHE.put('es:warm:state', JSON.stringify({ nextPage, titles, lastComplete: 0 }), { expirationTtl: _ES_KV_TTL });
+  // More pages remain — save progress (in Cache API, not KV)
+  await _putWarmState({ nextPage, titles, lastComplete: 0 });
 }
 
 /** Format proxy response for all modes (nofollow, wantCookie, passthrough). */

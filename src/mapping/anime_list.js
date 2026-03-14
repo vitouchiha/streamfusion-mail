@@ -25,6 +25,9 @@ const path = require("path");
 const LIST_URL =
   "https://raw.githubusercontent.com/Fribb/anime-lists/master/anime-list-full.json";
 
+const KOMETA_URL =
+  "https://raw.githubusercontent.com/Kometa-Team/Anime-IDs/master/anime_ids.json";
+
 const UPDATE_HOURS = Math.max(1, parseInt(process.env.ANIME_LIST_UPDATE_HOURS, 10) || 24);
 const REFRESH_MS = UPDATE_HOURS * 60 * 60 * 1000;
 
@@ -32,6 +35,8 @@ const REFRESH_MS = UPDATE_HOURS * 60 * 60 * 1000;
 const CACHE_DIR = fs.existsSync("/tmp") ? "/tmp" : path.join(__dirname, "..", "..", "data");
 const CACHE_FILE = path.join(CACHE_DIR, "anime-list-full.json.cache");
 const ETAG_FILE  = path.join(CACHE_DIR, "anime-list-etag.txt");
+const KOMETA_CACHE_FILE = path.join(CACHE_DIR, "kometa-anime-ids.json.cache");
+const KOMETA_ETAG_FILE  = path.join(CACHE_DIR, "kometa-anime-ids-etag.txt");
 
 // ─── In-memory indexes ────────────────────────────────────────────────────────
 let byKitsu   = new Map(); // kitsu_id (number)  → entry
@@ -45,9 +50,11 @@ let byAnidb   = new Map(); // anidb_id (number)   → entry
 let loaded   = false;
 let loading  = null;   // dedup promise
 let lastEtag = null;
+let kometaEtag = null;
 let refreshTimer = null;
 let lastUpdateAt  = null;  // Date of last successful update
 let totalEntries  = 0;
+let kometaEntries = 0;
 
 // ─── Local file cache helpers ─────────────────────────────────────────────────
 function loadCachedEtag() {
@@ -154,6 +161,109 @@ async function download(isScheduled = false) {
   }
 }
 
+// ─── Kometa Anime-IDs supplementary list ──────────────────────────────────────
+function loadKometaFromCache() {
+  try {
+    if (!fs.existsSync(KOMETA_CACHE_FILE)) return null;
+    const raw = fs.readFileSync(KOMETA_CACHE_FILE, "utf8");
+    return JSON.parse(raw);
+  } catch { return null; }
+}
+
+function mergeKometaData(kometaObj) {
+  // Kometa keys are AniDB IDs, values have: tvdb_id, tvdb_season, tvdb_epoffset, mal_id, anilist_id, imdb_id
+  let merged = 0;
+  for (const [anidbIdStr, entry] of Object.entries(kometaObj)) {
+    const anidbId = Number(anidbIdStr);
+    if (!anidbId || !entry) continue;
+
+    // Merge into IMDB index if Kometa has an IMDB mapping we don't have
+    if (entry.imdb_id && !byImdb.has(entry.imdb_id)) {
+      const synthetic = {
+        anidb_id: anidbId,
+        imdb_id: entry.imdb_id,
+        tvdb_id: entry.tvdb_id || undefined,
+        mal_id: entry.mal_id || undefined,
+        anilist_id: entry.anilist_id || undefined,
+        _source: "kometa",
+      };
+      byImdb.set(entry.imdb_id, [synthetic]);
+      merged++;
+    }
+
+    // Merge TVDB mapping
+    if (entry.tvdb_id && !byTvdb.has(entry.tvdb_id)) {
+      const synthetic = {
+        anidb_id: anidbId,
+        tvdb_id: entry.tvdb_id,
+        mal_id: entry.mal_id || undefined,
+        anilist_id: entry.anilist_id || undefined,
+        imdb_id: entry.imdb_id || undefined,
+        _source: "kometa",
+      };
+      byTvdb.set(entry.tvdb_id, [synthetic]);
+      merged++;
+    }
+
+    // Merge AniDB mapping
+    if (!byAnidb.has(anidbId)) {
+      byAnidb.set(anidbId, {
+        anidb_id: anidbId,
+        tvdb_id: entry.tvdb_id || undefined,
+        mal_id: entry.mal_id || undefined,
+        anilist_id: entry.anilist_id || undefined,
+        imdb_id: entry.imdb_id || undefined,
+        _source: "kometa",
+      });
+      merged++;
+    }
+  }
+  kometaEntries = Object.keys(kometaObj).length;
+  return merged;
+}
+
+async function downloadKometa(isScheduled = false) {
+  const tag = isScheduled ? "Kometa scheduled" : "Kometa initial";
+  try {
+    const headers = {};
+    if (kometaEtag) headers["If-None-Match"] = kometaEtag;
+
+    const res = await fetch(KOMETA_URL, { headers });
+    if (res.status === 304) {
+      console.log(`[AnimeList] ${tag}: Not modified (304).`);
+      return false;
+    }
+    if (!res.ok) {
+      console.error(`[AnimeList] ${tag}: HTTP ${res.status}`);
+      return false;
+    }
+
+    const etag = res.headers.get("etag") || null;
+    const rawBuf = await res.text();
+    const data = JSON.parse(rawBuf);
+
+    if (!data || typeof data !== "object" || Object.keys(data).length < 1000) {
+      console.error(`[AnimeList] ${tag}: Invalid data`);
+      return false;
+    }
+
+    const merged = mergeKometaData(data);
+    kometaEtag = etag;
+
+    try {
+      if (!fs.existsSync(CACHE_DIR)) fs.mkdirSync(CACHE_DIR, { recursive: true });
+      fs.writeFileSync(KOMETA_CACHE_FILE, rawBuf);
+      if (etag) fs.writeFileSync(KOMETA_ETAG_FILE, etag);
+    } catch {}
+
+    console.log(`[AnimeList] ${tag}: ${Object.keys(data).length} entries, ${merged} new mappings merged.`);
+    return true;
+  } catch (err) {
+    console.error(`[AnimeList] ${tag}: Error — ${err.message}`);
+    return false;
+  }
+}
+
 function scheduleRefresh() {
   if (refreshTimer) return;
   refreshTimer = setInterval(() => {
@@ -164,6 +274,7 @@ function scheduleRefresh() {
     }).catch(err => {
       console.error("[AnimeList] Scheduled update failed:", err.message);
     });
+    downloadKometa(true).catch(() => {});
   }, REFRESH_MS);
   if (refreshTimer.unref) refreshTimer.unref();
   console.log(`[AnimeList] Scheduled periodic updates every ${UPDATE_HOURS}h.`);
@@ -182,16 +293,26 @@ async function ensureLoaded() {
       lastEtag = cachedEtag;
       loaded = true;
       lastUpdateAt = new Date();
-      console.log(`[AnimeList] Loaded ${cachedList.length} entries from local cache. ETag: ${cachedEtag || "none"}`);
+      // Load Kometa from cache and merge
+      const kometaCached = loadKometaFromCache();
+      if (kometaCached) {
+        const merged = mergeKometaData(kometaCached);
+        kometaEtag = (function() { try { return fs.existsSync(KOMETA_ETAG_FILE) ? fs.readFileSync(KOMETA_ETAG_FILE, "utf8").trim() : null; } catch { return null; } })();
+        console.log(`[AnimeList] Loaded ${cachedList.length} entries + Kometa (${kometaEntries}, +${merged} new) from cache. ETag: ${cachedEtag || "none"}`);
+      } else {
+        console.log(`[AnimeList] Loaded ${cachedList.length} entries from local cache. ETag: ${cachedEtag || "none"}`);
+      }
       // Still schedule a background refresh to pick up any remote changes
       scheduleRefresh();
       // Trigger a background refresh without blocking
       download(true).catch(() => {});
+      downloadKometa(false).catch(() => {});
       return;
     }
 
     // 2) No local cache — download from remote
     await download(false);
+    await downloadKometa(false);
     scheduleRefresh();
   })().finally(() => { loading = null; });
 
@@ -259,6 +380,7 @@ function stats() {
   return {
     loaded,
     totalEntries,
+    kometaEntries,
     kitsu: byKitsu.size,
     mal: byMal.size,
     anilist: byAnilist.size,
