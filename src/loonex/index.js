@@ -4,6 +4,7 @@ const { getProviderUrl } = require("../provider_urls.js");
 const { formatStream } = require("../formatter.js");
 const { fetchWithAxios } = require("../utils/fetcher.js");
 const { getLoonexTitle } = require("../config/loonexTitleMap.js");
+const { TMDB_API_KEY } = require("../utils/config");
 
 function getBaseUrl() {
   return getProviderUrl("loonex") || "https://loonex.eu";
@@ -44,7 +45,7 @@ function extractSeasonNumber(seasonTitle) {
 
 async function getTitleFromTMDb(imdbId, tmdbId, tmdbApiKey) {
   try {
-    const apiKey = tmdbApiKey || "40a9faa1f6741afb2c0c40238d85f8d0";
+    const apiKey = tmdbApiKey || TMDB_API_KEY;
     let url;
     if (tmdbId) {
       url = `https://api.themoviedb.org/3/tv/${tmdbId}?api_key=${apiKey}&language=it-IT`;

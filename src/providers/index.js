@@ -536,7 +536,7 @@ async function _buildTitleCandidates(imdbId, type, config, primaryTitle) {
 
   add(primaryTitle);
 
-  const tmdbKey = config.tmdbKey || process.env.TMDB_API_KEY || '68e094699525b18a70bab2f86b1fa706';
+  const tmdbKey = config.tmdbKey || process.env.TMDB_API_KEY || TMDB_API_KEY;
   if (tmdbKey && imdbId) {
     try {
       const findUrl = `https://api.themoviedb.org/3/find/${encodeURIComponent(imdbId)}?api_key=${tmdbKey}&external_source=imdb_id&language=it-IT`;

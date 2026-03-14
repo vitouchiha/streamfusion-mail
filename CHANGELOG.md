@@ -4,6 +4,7 @@
 - **Rimosso CF_WORKER_AUTH hardcoded** — Token rimosso da `src/mapping/index.js` e `src/animeunity/index.js`. Ora usa solo `process.env.CF_WORKER_AUTH`.
 - **File .env con secret rimossi da git** — `.env.production` e `.env.vercel.prod` non più tracciati.
 - **Token sanitizzato dai docs** — Rimosso token CF Worker da `docs/copilot-memory/repo_streamfusion-mail-notes.md`.
+- **Centralizzazione TMDB API key** — 3 chiavi TMDB hardcoded (in 19 file) sostituite con import unico da `src/utils/config.js`. Lettura da `process.env.TMDB_API_KEY` con fallback `DEFAULT_CONFIG.tmdbKey`.
 
 ### Changed
 - **100+ file debug/test rimossi da git** — Test scripts, log, debug output non più tracciati. File locali mantenuti.

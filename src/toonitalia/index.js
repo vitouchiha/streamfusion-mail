@@ -4,6 +4,7 @@ const { getProviderUrl } = require("../provider_urls.js");
 const { formatStream } = require("../formatter.js");
 const { fetchWithAxios } = require("../utils/fetcher.js");
 const { extractFromUrl } = require("../extractors/index.js");
+const { TMDB_API_KEY } = require("../utils/config");
 
 function getBaseUrl() {
   return getProviderUrl("toonitalia") || "https://toonitalia.xyz";
@@ -31,7 +32,7 @@ function getIdOverride(id) {
 
 async function getSeriesInfoFromTMDb(imdbId, tmdbId, tmdbApiKey) {
   try {
-    const apiKey = tmdbApiKey || "40a9faa1f6741afb2c0c40238d85f8d0";
+    const apiKey = tmdbApiKey || TMDB_API_KEY;
     let url;
     if (tmdbId) {
       url = `https://api.themoviedb.org/3/tv/${tmdbId}?api_key=${apiKey}&language=it-IT`;
