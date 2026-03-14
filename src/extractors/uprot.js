@@ -18,45 +18,15 @@
 
 const { extractMaxStream } = require('./maxstream');
 const { decodePngGrayscale, ocrDigitsFromPixels, encodePngGrayscale, preprocessCaptcha } = require('../utils/ocr');
+const { proxyFetch } = require('../utils/proxy');
 
 const UPROT_INIT_URL = 'https://uprot.net/msf/r4hcq47tarq8';
 const COOKIE_TTL = 22 * 3600 * 1000; // 22h
 const UA = 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36';
 const CF_WORKER_URL = 'https://kisskh-proxy.vitobsfm.workers.dev';
 
-// ─── Proxy-aware fetch for uprot.net ──────────────────────────────────────────
-// Cloudflare blocks datacenter IPs (Vercel, CF Workers) with 403.
-// Use PROXY_URL (residential/rotating proxy) to bypass the block.
-// Create a FRESH ProxyAgent per fetch to avoid stale connection pool issues.
-function _createProxyDispatcher() {
-  const proxyUrl = (process.env.PROXY_URL || '').trim();
-  if (!proxyUrl) return null;
-  try {
-    const { ProxyAgent } = require('undici');
-    return new ProxyAgent(proxyUrl);
-  } catch (e) {
-    console.warn('[Uprot] Failed to create proxy agent:', e.message);
-    return null;
-  }
-}
-
-/** fetch() wrapper that uses PROXY_URL when available (fresh agent per call).
- *  Retries up to 3 times on 403 with rotating proxy (each retry gets a different IP). */
-async function _proxyFetch(url, opts = {}) {
-  const proxyUrl = (process.env.PROXY_URL || '').trim();
-  if (!proxyUrl) return fetch(url, opts);
-
-  const maxRetries = 5;
-  for (let i = 0; i < maxRetries; i++) {
-    const dispatcher = _createProxyDispatcher();
-    if (!dispatcher) return fetch(url, opts);
-    const resp = await fetch(url, { ...opts, dispatcher });
-    if (resp.status !== 403 || i === maxRetries - 1) return resp;
-    // Consume body before retry to avoid connection leak
-    await resp.text().catch(() => {});
-    console.log(`[Uprot] Proxy fetch 403, retrying (${i + 1}/${maxRetries})...`);
-  }
-}
+// Alias for the smart proxy fetch (tries multiple proxy IPs on failure)
+const _proxyFetch = proxyFetch;
 
 // Cookie cache per path type (/msf/, /msei/, etc.)
 let _cookieCache = {}; // { '/msf/': { sessid, captchaHash, captchaAnswer, ts }, ... }
@@ -420,15 +390,19 @@ async function _bypassUprot(uprotUrl, retried) {
       return null;
     }
 
-    // Follow redirect chain through uprots → maxstream
-    for (let i = 0; i < 10 && redirect.includes('uprots'); i++) {
+    // Follow redirect chain through uprots → maxstream (3 tries max, bail on CF block)
+    for (let i = 0; i < 3 && redirect.includes('uprots'); i++) {
       try {
         const rr = await _proxyFetch(redirect, {
           method: 'HEAD',
           headers: { 'User-Agent': UA },
           redirect: 'follow',
-          signal: AbortSignal.timeout(10000),
+          signal: AbortSignal.timeout(5000),
         });
+        if (rr.status === 503 || rr.status === 403) {
+          console.log('[Uprot] Redirect blocked by CF (' + rr.status + '), passing to extractMaxStream');
+          break;
+        }
         redirect = rr.url || redirect;
       } catch {
         break;
@@ -533,15 +507,16 @@ async function _extractMseiUprot(url) {
 
       console.log('[Uprot/msei] Redirect:', redirect);
 
-      // Follow redirect chain through uprots → maxstream
-      for (let i = 0; i < 10 && redirect.includes('uprots'); i++) {
+      // Follow redirect chain through uprots → maxstream (3 tries, bail on CF)
+      for (let i = 0; i < 3 && redirect.includes('uprots'); i++) {
         try {
           const rr = await _proxyFetch(redirect, {
             method: 'HEAD',
             headers: { 'User-Agent': UA },
             redirect: 'follow',
-            signal: AbortSignal.timeout(10000),
+            signal: AbortSignal.timeout(5000),
           });
+          if (rr.status === 503 || rr.status === 403) break;
           redirect = rr.url || redirect;
         } catch { break; }
       }
