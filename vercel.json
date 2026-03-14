@@ -14,7 +14,7 @@
   "crons": [
     {
       "path": "/api/cron/warm-uprot",
-      "schedule": "0 */12 * * *"
+      "schedule": "0 6 * * *"
     }
   ],
   "env": {
