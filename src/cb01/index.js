@@ -275,6 +275,19 @@ async function extractEpisodeStreams(link, providerContext = null) {
           ...(result.headers ? { behaviorHints: { notWebReady: true, proxyHeaders: { request: result.headers } } } : {}),
         }, 'CB01'));
       }
+    } else if (link.includes('uprot')) {
+      const result = await extractUprot(link);
+      if (result) {
+        streams.push(formatStream({
+          name: 'CB01 - MaxStream',
+          title: displayTitle,
+          url: result.url,
+          quality: '1080p',
+          type: 'direct',
+          addonBaseUrl: providerContext?.addonBaseUrl,
+          ...(result.headers ? { behaviorHints: { notWebReady: true, proxyHeaders: { request: result.headers } } } : {}),
+        }, 'CB01'));
+      }
     }
   } catch { /* skip */ }
   return streams;
@@ -297,7 +310,8 @@ async function extractSeriesStreams(pageUrl, season, episode, providerContext = 
     const episodePadded = String(episode).padStart(2, '0');
 
     // Find all season accordion headers: <div class="sp-head">STAGIONE N</div>
-    const spHeadRe = /<div[^>]+class="sp-head"[^>]*>([\s\S]*?)<\/div>/gi;
+    // Also matches "sp-head unfolded" etc.
+    const spHeadRe = /<div[^>]+class="sp-head[^"]*"[^>]*>([\s\S]*?)<\/div>/gi;
 
     // Helper: extract the line/block for an episode and try ALL links in it
     const tryAllLinksInBlock = async (block) => {

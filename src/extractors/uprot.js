@@ -267,30 +267,31 @@ async function _bypassUprot(uprotUrl, retried) {
 
     const html = await r.text();
 
+    // Strip display:none blocks and HTML comments to avoid honeypots/decoys
+    const cleanHtml = html
+      .replace(/<!--[\s\S]*?-->/g, '')
+      .replace(/<div[^>]*style=["'][^"']*display\s*:\s*none[^"']*["'][^>]*>[\s\S]*?<\/div>/gi, '');
+
     // Find the REAL uprots/maxstream redirect link.
-    // The page has DECOY empty <a> tags with a static dead URL,
-    // a HONEYPOT in display:none div, and the REAL link inside
-    // <a href="..."><button id="buttok">C O N T I N U E</button></a>
     let redirect = null;
 
-    // Primary: the <a> wrapping a <button id="buttok"> with C O N T I N U E
-    const buttokMatch = html.match(/href=["'](https?:\/\/[^"']+)["'][^>]*>\s*<button[^>]*id=["']buttok["'][^>]*>\s*C\s*O\s*N\s*T\s*I\s*N\s*U\s*E/i);
+    // Primary: <a> wrapping a <button id="buttok"> with C O N T I N U E
+    const buttokMatch = cleanHtml.match(/href=["'](https?:\/\/[^"']+)["'][^>]*>\s*<button[^>]*id=["']buttok["'][^>]*>\s*C\s*O\s*N\s*T\s*I\s*N\s*U\s*E/i);
     if (buttokMatch) {
       redirect = buttokMatch[1];
     }
 
-    // Fallback: any <a> whose inner text/HTML contains "C O N T I N U E" (spaced)
+    // Fallback: any visible <a> wrapping a <button> with "C o n t i n u e" text
     if (!redirect) {
-      const contMatch = html.match(/href=["'](https?:\/\/[^"']+)["'][^>]*>[\s\S]*?C\s+O\s+N\s+T\s+I\s+N\s+U\s+E/i);
+      const contMatch = cleanHtml.match(/href=["'](https?:\/\/[^"']+)["'][^>]*>\s*<button[^>]*>\s*C\s+[oO]\s+[nN]\s+[tT]\s+[iI]\s+[nN]\s+[uU]\s+[eE]\s*<\/button>/i);
       if (contMatch) redirect = contMatch[1];
     }
 
-    // Last resort: find all uprots URLs, skip the known-decoy pattern (appears 2+ times)
+    // Last resort: all uprots/uprotem URLs in clean HTML, pick unique one
     if (!redirect) {
-      const allUprots = [...html.matchAll(/href=["'](https?:\/\/[^"']*uprots\/[^"']+)["']/gi)].map(m => m[1]);
+      const allUprots = [...cleanHtml.matchAll(/href=["'](https?:\/\/[^"']*uprot(?:s|em)\/[^"']+)["']/gi)].map(m => m[1]);
       const counts = {};
       for (const u of allUprots) counts[u] = (counts[u] || 0) + 1;
-      // The real link appears once; decoys appear multiple times
       redirect = allUprots.find(u => counts[u] === 1) || null;
     }
 
@@ -386,26 +387,29 @@ async function _extractMseiUprot(url) {
         continue;
       }
 
-      // 4. Extract redirect link (same logic as /msf/ bypass)
+      // 4. Extract redirect link — strip honeypots first
+      const cleanHtml2 = html2
+        .replace(/<!--[\s\S]*?-->/g, '')
+        .replace(/<div[^>]*style=["'][^"']*display\s*:\s*none[^"']*["'][^>]*>[\s\S]*?<\/div>/gi, '');
+
       let redirect = null;
-      const buttokMatch = html2.match(/href=["'](https?:\/\/[^"']+)["'][^>]*>\s*<button[^>]*id=["']buttok["'][^>]*>\s*C\s*O\s*N\s*T\s*I\s*N\s*U\s*E/i);
+      const buttokMatch = cleanHtml2.match(/href=["'](https?:\/\/[^"']+)["'][^>]*>\s*<button[^>]*id=["']buttok["'][^>]*>\s*C\s*O\s*N\s*T\s*I\s*N\s*U\s*E/i);
       if (buttokMatch) redirect = buttokMatch[1];
 
       if (!redirect) {
-        const contMatch = html2.match(/href=["'](https?:\/\/[^"']+)["'][^>]*>[\s\S]*?C\s+O\s+N\s+T\s+I\s+N\s+U\s+E/i);
+        const contMatch = cleanHtml2.match(/href=["'](https?:\/\/[^"']+)["'][^>]*>\s*<button[^>]*>\s*C\s+[oO]\s+[nN]\s+[tT]\s+[iI]\s+[nN]\s+[uU]\s+[eE]\s*<\/button>/i);
         if (contMatch) redirect = contMatch[1];
       }
 
       if (!redirect) {
-        const allUprots = [...html2.matchAll(/href=["'](https?:\/\/[^"']*uprots\/[^"']+)["']/gi)].map(m => m[1]);
+        const allUprots = [...cleanHtml2.matchAll(/href=["'](https?:\/\/[^"']*uprot(?:s|em)\/[^"']+)["']/gi)].map(m => m[1]);
         const counts = {};
         for (const u of allUprots) counts[u] = (counts[u] || 0) + 1;
         redirect = allUprots.find(u => counts[u] === 1) || null;
       }
 
       if (!redirect) {
-        // Try any maxstream link
-        const msMatch = html2.match(/href=["'](https?:\/\/[^"']*maxstream[^"']+)["']/i);
+        const msMatch = cleanHtml2.match(/href=["'](https?:\/\/[^"']*maxstream[^"']+)["']/i);
         if (msMatch) redirect = msMatch[1];
       }
 
