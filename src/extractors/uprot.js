@@ -332,6 +332,10 @@ async function _bypassUprot(uprotUrl, retried) {
     });
 
     const html = await r.text();
+    console.log('[Uprot] Bypass response: status', r.status, 'htmlLen', html.length,
+      'hasCaptcha:', /data:image\/png;base64/i.test(html),
+      'hasButtok:', /buttok/i.test(html),
+      'cookieAge:', Math.round((Date.now() - cookies.ts) / 60000), 'min');
 
     // Strip display:none blocks and HTML comments to avoid honeypots/decoys
     const cleanHtml = html

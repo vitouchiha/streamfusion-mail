@@ -509,6 +509,76 @@ app.get([
   }
 });
 
+// Uprot diagnostic endpoint — tests the bypass chain from Vercel's IP
+app.get('/diag/uprot', async (req, res) => {
+  const uprotUrl = req.query.url || 'https://uprot.net/msf/r4hcq47tarq8';
+  const UA = 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36';
+  const diag = { url: uprotUrl, ts: new Date().toISOString(), steps: [] };
+  try {
+    // Step 1: Check KV cookies
+    const CF_WORKER_URL = process.env.CF_WORKER_URL || 'https://kisskh-proxy.vitobsfm.workers.dev';
+    const auth = process.env.CF_WORKER_AUTH || '';
+    let cookies = null;
+    try {
+      const kvResp = await fetch(`${CF_WORKER_URL}/?uprot_kv=1&auth=${encodeURIComponent(auth)}`, { signal: AbortSignal.timeout(8000) });
+      if (kvResp.ok) {
+        const kvData = await kvResp.json();
+        diag.steps.push({ step: 'kv_load', ok: true, age_min: Math.round((Date.now() - (kvData.t || 0)) / 60000), has_sessid: !!kvData.cookies?.PHPSESSID, has_captcha: !!kvData.cookies?.captcha });
+        if (kvData.cookies?.PHPSESSID && kvData.data && (Date.now() - kvData.t) < 22 * 3600000) {
+          cookies = kvData;
+        }
+      } else {
+        diag.steps.push({ step: 'kv_load', ok: false, status: kvResp.status });
+      }
+    } catch (e) { diag.steps.push({ step: 'kv_load', ok: false, error: e.message }); }
+
+    if (!cookies) {
+      diag.result = 'no_cookies';
+      return res.json(diag);
+    }
+
+    // Step 2: POST to uprot with cookies
+    const cookieStr = `PHPSESSID=${cookies.cookies.PHPSESSID}${cookies.cookies.captcha ? `; captcha=${cookies.cookies.captcha}` : ''}`;
+    const captchaAnswer = cookies.data?.captcha || '';
+    try {
+      const r = await fetch(uprotUrl, {
+        method: 'POST',
+        headers: {
+          'User-Agent': UA,
+          'Content-Type': 'application/x-www-form-urlencoded',
+          'Origin': 'https://uprot.net',
+          'Referer': uprotUrl,
+          'Cookie': cookieStr,
+        },
+        body: `captcha=${captchaAnswer}`,
+        redirect: 'manual',
+        signal: AbortSignal.timeout(15000),
+      });
+      const html = await r.text();
+      const setCookie = r.headers.get('set-cookie') || '';
+      const clean = html.replace(/<!--[\s\S]*?-->/g, '').replace(/<div[^>]*style=["'][^"']*display\s*:\s*none[^"']*["'][^>]*>[\s\S]*?<\/div>/gi, '');
+      const allHrefs = [...clean.matchAll(/href=["'](https?:\/\/[^"']+)["']/gi)].map(m => m[1]);
+      const videoHrefs = allHrefs.filter(u => /maxstream|uprots|uprotem/i.test(u));
+      const buttok = clean.match(/href=["'](https?:\/\/[^"']+)["'][^>]*>\s*<button[^>]*id=["']buttok["']/i);
+      diag.steps.push({
+        step: 'bypass_post',
+        status: r.status,
+        htmlLen: html.length,
+        cleanLen: clean.length,
+        hasCaptchaImage: /data:image\/png;base64/i.test(html),
+        hasButtok: !!buttok,
+        buttokUrl: buttok ? buttok[1] : null,
+        allHrefsCount: allHrefs.length,
+        videoHrefs: videoHrefs.slice(0, 5),
+        setCookiePreview: setCookie.substring(0, 100),
+        htmlPreview: html.replace(/data:image\/png;base64,[^'"]+/g, '[CAPTCHA_IMG]').substring(0, 500),
+      });
+      diag.result = buttok ? 'redirect_found' : (videoHrefs.length > 0 ? 'video_hrefs_found' : 'no_redirect');
+    } catch (e) { diag.steps.push({ step: 'bypass_post', ok: false, error: e.message }); diag.result = 'bypass_error'; }
+  } catch (e) { diag.result = 'error'; diag.error = e.message; }
+  res.json(diag);
+});
+
 // ─── Health ───────────────────────────────────────────────────────────────────
 
 app.get('/health', (req, res) => {
