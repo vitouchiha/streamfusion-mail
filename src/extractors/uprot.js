@@ -530,8 +530,49 @@ async function _extractMseiUprot(url) {
 }
 
 /**
+ * Delegate uprot resolution to CF Worker (most reliable: same-IP, direct AI access).
+ * ?uprot=1&url=<uprotUrl>&extract=1&auth=<auth>
+ * Returns { url, headers } or null.
+ */
+async function _resolveViaCfWorker(uprotUrl) {
+  const auth = process.env.CF_WORKER_AUTH || '';
+  if (!auth) return null;
+  try {
+    const params = new URLSearchParams({
+      url: uprotUrl,
+      uprot: '1',
+      extract: '1',
+      auth,
+    });
+    console.log('[Uprot] Delegating to CF Worker:', uprotUrl);
+    const resp = await fetch(`${CF_WORKER_URL}/?${params}`, {
+      signal: AbortSignal.timeout(45000),
+      headers: { 'User-Agent': UA },
+    });
+    if (!resp.ok) {
+      const body = await resp.text().catch(() => '');
+      console.warn('[Uprot] CF Worker returned', resp.status, body.substring(0, 200));
+      return null;
+    }
+    const data = await resp.json();
+    console.log('[Uprot] CF Worker result:', data.method || 'unknown', data.url ? 'URL found' : 'no URL');
+    if (data.url) {
+      return {
+        url: data.url,
+        headers: { 'User-Agent': UA, 'Referer': 'https://maxstream.video/' },
+      };
+    }
+    return null;
+  } catch (e) {
+    console.warn('[Uprot] CF Worker delegation failed:', e.message);
+    return null;
+  }
+}
+
+/**
  * Main entry: resolve an uprot.net link to a playable video URL.
- * Uses KV-persisted cookies when available (fast path), solves fresh captcha as fallback.
+ * Primary: delegate to CF Worker (single-IP, reliable OCR).
+ * Fallback: local captcha solving with KV-cached cookies.
  * Returns { url, headers } or null.
  */
 async function extractUprot(uprotUrl) {
@@ -541,6 +582,13 @@ async function extractUprot(uprotUrl) {
 
     // /msfld/ is a folder listing — not directly extractable (handled by CB01 provider)
     if (link.includes('/msfld/')) return null;
+
+    // Primary strategy: delegate entire chain to CF Worker
+    const cfResult = await _resolveViaCfWorker(link);
+    if (cfResult) return cfResult;
+
+    // Fallback: local resolution
+    console.log('[Uprot] CF Worker failed, trying local resolution for', link);
 
     // /msei/ uses token-based captcha (per-URL, no session caching)
     if (link.includes('/msei/')) return _extractMseiUprot(link);

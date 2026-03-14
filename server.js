@@ -178,7 +178,7 @@ function copyProxyResponseHeaders(res, headers = {}) {
 /** Stremio JSON response with optional Cache-Control */
 function stremioJson(res, data, { maxAge = 0 } = {}) {
   if (maxAge > 0) {
-    res.setHeader('Cache-Control', `public, max-age=${maxAge}, stale-while-revalidate=${maxAge * 3}`);
+    res.setHeader('Cache-Control', `public, max-age=${maxAge}, stale-while-revalidate=${maxAge * 3}, stale-if-error=${maxAge * 6}`);
   } else {
     // Explicitly prevent Vercel Edge CDN from caching empty/null responses
     res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
@@ -458,9 +458,11 @@ app.get([
       count: streams.length,
       webReady: webReadyCount,
     });
-    // Stream payloads are short-lived and can contain expiring URLs or flaky provider results.
-    // Never cache them at the edge, otherwise Stremio can keep seeing stale empty responses.
-    stremioJson(res, result, { maxAge: 0 });
+    // Short cache when we have results: allows Stremio to avoid re-fetching for 2 min,
+    // while stale-while-revalidate lets Edge serve stale data for up to 10 min during refresh.
+    // No cache for empty results so Stremio retries immediately.
+    const hasStreams = streams.length > 0;
+    stremioJson(res, result, { maxAge: hasStreams ? 120 : 0 });
   } catch (err) {
     log.error(`streamRoute: ${err.message}`);
     stremioJson(res, { streams: [] });

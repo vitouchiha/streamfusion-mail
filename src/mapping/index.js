@@ -726,22 +726,34 @@ async function findSeasonSpecificKitsuId(imdbId, tvdbId, requestedSeason) {
   return null;
 }
 
+// Extract the "clean slug" from a provider path, stripping:
+//   AnimeUnity numeric prefix (/anime/4851-...),
+//   AnimeWorld hash suffix (.JvOQx),
+//   common language tags (-ita, -sub-ita, -ita-sub, etc.)
+function cleanSlug(p) {
+  let slug = p.split('/').pop() || '';
+  slug = slug.replace(/^\d+-/, '');          // AnimeUnity ID prefix
+  slug = slug.replace(/\.[a-zA-Z0-9]{4,8}$/, ''); // AnimeWorld hash suffix
+  slug = slug.replace(/-(ita|sub-ita|ita-sub|sub|eng|raw|jp|dub)$/i, ''); // language tag
+  return slug.toLowerCase();
+}
+
+// Patterns that identify spinoff/special content rather than main series
+const SPINOFF_PATTERNS = /\b(mini[- ]?anime|specials?|ova|oav|ona|movie|film|recap|picture[- ]?drama|prologue|epilogue)\b/i;
+
+// Filter out spinoff/special paths when requesting a regular TV season.
+// Only applied when there are at least 2 paths — if only 1 path exists,
+// we keep it even if it looks like a spinoff (better than nothing).
+function filterSpinoffPaths(paths) {
+  if (!Array.isArray(paths) || paths.length <= 1) return paths;
+  const mainPaths = paths.filter(p => !SPINOFF_PATTERNS.test(cleanSlug(p)));
+  return mainPaths.length > 0 ? mainPaths : paths;
+}
+
 // Filter provider paths by season: prefer season-specific paths (e.g. slug ending in "-2")
 function filterPathsBySeason(paths, requestedSeason) {
   if (!Array.isArray(paths) || paths.length <= 1) return paths;
   if (!Number.isInteger(requestedSeason) || requestedSeason < 1) return paths;
-
-  // Extract the "clean slug" from a provider path, stripping:
-  //   AnimeUnity numeric prefix (/anime/4851-...),
-  //   AnimeWorld hash suffix (.JvOQx),
-  //   common language tags (-ita, -sub-ita, -ita-sub, etc.)
-  function cleanSlug(p) {
-    let slug = p.split('/').pop() || '';
-    slug = slug.replace(/^\d+-/, '');          // AnimeUnity ID prefix
-    slug = slug.replace(/\.[a-zA-Z0-9]{4,8}$/, ''); // AnimeWorld hash suffix
-    slug = slug.replace(/-(ita|sub-ita|ita-sub|sub|eng|raw|jp|dub)$/i, ''); // language tag
-    return slug.toLowerCase();
-  }
 
   if (requestedSeason >= 2) {
     const num = String(requestedSeason);
@@ -856,6 +868,11 @@ async function resolveByKitsu(kitsuId, options = {}) {
     animeSaturnPaths = filterPathsBySeason(animeSaturnPaths, requestedSeason);
     animeUnityPaths = filterPathsBySeason(animeUnityPaths, requestedSeason);
   }
+
+  // Filter out spinoff/special paths (mini-anime, OVA, specials, etc.)
+  animeWorldPaths = filterSpinoffPaths(animeWorldPaths);
+  animeSaturnPaths = filterSpinoffPaths(animeSaturnPaths);
+  animeUnityPaths = filterSpinoffPaths(animeUnityPaths);
 
   const payload = {
     ok: true,

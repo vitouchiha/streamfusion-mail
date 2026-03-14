@@ -402,10 +402,11 @@ async function getStreams(id, type, season, episode, config = {}) {
     // Grace = min(remaining time until cap, GRACE_MS).
     const allStreams = [];
     const settled = new Map();
+    const seenUrls = new Set();
 
-    const ABSOLUTE_CAP_MS = 20000; // never wait more than 20s total
-    const GRACE_AFTER_FIRST_MS = 5000; // 5s grace after first streams arrive
-    const MIN_WAIT_MS = 8000; // always wait at least 8s for slower providers
+    const ABSOLUTE_CAP_MS = 25000; // never wait more than 25s total (allows CB01 to finish)
+    const GRACE_AFTER_FIRST_MS = 8000; // 8s grace after first streams arrive (was 5s)
+    const MIN_WAIT_MS = 10000; // always wait at least 10s for slower providers (was 8s)
 
     await new Promise((resolveAll) => {
       let resolved = false;
@@ -430,7 +431,14 @@ async function getStreams(id, type, season, episode, config = {}) {
           if (resolved) return;
           settled.set(result.provider, result);
           if (result.status === 'fulfilled' && result.streams?.length > 0) {
-            allStreams.push(...result.streams);
+            // Deduplicate streams by URL before adding
+            for (const s of result.streams) {
+              const url = String(s?.url || s?.externalUrl || '').trim();
+              if (url && !seenUrls.has(url)) {
+                seenUrls.add(url);
+                allStreams.push(s);
+              }
+            }
             // Start grace timer on first successful result
             if (!graceTimeout) {
               graceTimeout = setTimeout(finish, GRACE_AFTER_FIRST_MS);

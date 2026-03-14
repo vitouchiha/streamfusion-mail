@@ -45,6 +45,18 @@ const IMDB_NO_MATCH_CACHE_TTL = Number(process.env.IMDB_NO_MATCH_CACHE_TTL) || 6
 
 const _imdbEpisodeCache = new Map();
 
+// ─── In-memory stream response cache ──────────────────────────────────────────
+// Short-lived cache for stream results. Avoids redundant scraping when Stremio
+// re-requests the same ID within a few minutes (e.g. user browses back/forth).
+const _streamCache = new Map();
+const STREAM_CACHE_TTL = 5 * 60_000;     // 5 minutes
+const STREAM_CACHE_MAX = 200;            // max entries to prevent memory leaks
+
+// ─── Request deduplication queue ──────────────────────────────────────────────
+// If the same ID is requested concurrently (Stremio often fires 2-3 requests at once),
+// reuse the in-flight Promise instead of launching parallel scrapes.
+const _inflightRequests = new Map();
+
 function _cacheGet(map, key) {
   const entry = map.get(key);
   if (!entry) return undefined;
@@ -185,6 +197,39 @@ async function handleMeta(type, id, config = {}) {
  */
 async function handleStream(type, id, config = {}) {
   log.info('stream request', { type, id });
+
+  // ─── Stream response cache: return cached result if fresh ────────────────
+  const cacheKey = `${type}:${id}`;
+  const cachedResult = _cacheGet(_streamCache, cacheKey);
+  if (cachedResult !== undefined) {
+    log.info(`stream cache hit (${cachedResult.streams?.length || 0} streams)`, { id });
+    return cachedResult;
+  }
+
+  // ─── Request dedup: if same ID is already in-flight, piggyback on it ─────
+  const inflightKey = cacheKey;
+  if (_inflightRequests.has(inflightKey)) {
+    log.info('stream dedup: reusing in-flight request', { id });
+    return _inflightRequests.get(inflightKey);
+  }
+
+  const promise = _handleStreamImpl(type, id, config).then(result => {
+    // Cache the result (evict oldest if over limit)
+    if (_streamCache.size >= STREAM_CACHE_MAX) {
+      const oldest = _streamCache.keys().next().value;
+      _streamCache.delete(oldest);
+    }
+    _cacheSet(_streamCache, cacheKey, result, STREAM_CACHE_TTL);
+    return result;
+  }).finally(() => {
+    _inflightRequests.delete(inflightKey);
+  });
+
+  _inflightRequests.set(inflightKey, promise);
+  return promise;
+}
+
+async function _handleStreamImpl(type, id, config = {}) {
 
   let streams = [];
 
