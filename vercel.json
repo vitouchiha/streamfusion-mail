@@ -11,6 +11,12 @@
   "routes": [
     { "src": "/(.*)", "dest": "api/index.js" }
   ],
+  "crons": [
+    {
+      "path": "/api/cron/warm-uprot",
+      "schedule": "0 */12 * * *"
+    }
+  ],
   "env": {
     "NODE_ENV": "production"
   }

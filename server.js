@@ -520,6 +520,50 @@ app.get('/api/status', (req, res) => {
   });
 });
 
+// ─── Cron: auto-refresh uprot cookies ─────────────────────────────────────────
+
+app.get('/api/cron/warm-uprot', async (req, res) => {
+  // Vercel cron sends Authorization: Bearer <CRON_SECRET>
+  const cronSecret = (process.env.CRON_SECRET || '').trim();
+  if (cronSecret) {
+    const provided = (req.get('authorization') || '').replace(/^Bearer\s+/i, '').trim();
+    if (provided !== cronSecret) return res.status(401).json({ error: 'Unauthorized' });
+  }
+
+  const CF_WORKER_URL = 'https://kisskh-proxy.vitobsfm.workers.dev';
+  const auth = (process.env.CF_WORKER_AUTH || '').trim();
+
+  try {
+    // Check if KV cookies are still valid
+    let kvAge = null;
+    if (auth) {
+      try {
+        const kvResp = await fetch(`${CF_WORKER_URL}/?uprot_kv=1&auth=${encodeURIComponent(auth)}`, { signal: AbortSignal.timeout(8000) });
+        if (kvResp.ok) {
+          const kvData = await kvResp.json();
+          if (kvData.t) kvAge = Math.round((Date.now() - kvData.t) / 60000);
+          if (kvData.cookies?.PHPSESSID && kvAge !== null && kvAge < 18 * 60) {
+            return res.json({ status: 'skip', reason: 'cookies still valid', ageMin: kvAge });
+          }
+        }
+      } catch { /* KV check failed, proceed to solve */ }
+    }
+
+    // Solve fresh captcha
+    const { extractUprot } = require('./src/extractors/uprot');
+    const start = Date.now();
+    const result = await extractUprot('https://uprot.net/msf/r4hcq47tarq8');
+    const elapsed = Math.round((Date.now() - start) / 1000);
+
+    if (result && result.url) {
+      return res.json({ status: 'ok', elapsed, url: result.url.substring(0, 60) });
+    }
+    return res.status(502).json({ status: 'failed', elapsed, reason: 'captcha solve failed' });
+  } catch (err) {
+    return res.status(500).json({ status: 'error', message: err.message });
+  }
+});
+
 // ─── Debug (provider reachability) ───────────────────────────────────────────
 
 /**
