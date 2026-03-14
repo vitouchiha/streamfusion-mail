@@ -2,6 +2,30 @@
 
 const { USER_AGENT } = require('./common');
 
+// maxstream.video uses Cloudflare to block datacenter IPs.
+// Use PROXY_URL (rotating proxy) to bypass the block, with retry on 403.
+function _createProxyDispatcher() {
+  const proxyUrl = (process.env.PROXY_URL || '').trim();
+  if (!proxyUrl) return null;
+  try {
+    const { ProxyAgent } = require('undici');
+    return new ProxyAgent(proxyUrl);
+  } catch { return null; }
+}
+
+async function _proxyFetch(url, opts = {}) {
+  const proxyUrl = (process.env.PROXY_URL || '').trim();
+  if (!proxyUrl) return fetch(url, opts);
+  const maxRetries = 3;
+  for (let i = 0; i < maxRetries; i++) {
+    const dispatcher = _createProxyDispatcher();
+    if (!dispatcher) return fetch(url, opts);
+    const resp = await fetch(url, { ...opts, dispatcher });
+    if (resp.status !== 403 || i === maxRetries - 1) return resp;
+    await resp.text().catch(() => {});
+  }
+}
+
 /**
  * Extract a direct video stream URL from a MaxStream page.
  * MaxStream hosts video via a simple sources[{src: "..."}] structure.
@@ -13,7 +37,7 @@ async function extractMaxStream(url) {
     const normalizedUrl = String(url || '').trim();
     if (!normalizedUrl.startsWith('http')) return null;
 
-    const resp = await fetch(normalizedUrl, {
+    const resp = await _proxyFetch(normalizedUrl, {
       headers: {
         'User-Agent': USER_AGENT,
         'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',

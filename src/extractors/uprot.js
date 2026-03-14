@@ -46,7 +46,7 @@ async function _proxyFetch(url, opts = {}) {
   const proxyUrl = (process.env.PROXY_URL || '').trim();
   if (!proxyUrl) return fetch(url, opts);
 
-  const maxRetries = 3;
+  const maxRetries = 5;
   for (let i = 0; i < maxRetries; i++) {
     const dispatcher = _createProxyDispatcher();
     if (!dispatcher) return fetch(url, opts);
