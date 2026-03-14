@@ -514,6 +514,13 @@ app.get('/diag/uprot', async (req, res) => {
   const uprotUrl = req.query.url || 'https://uprot.net/msf/r4hcq47tarq8';
   const UA = 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36';
   const diag = { url: uprotUrl, ts: new Date().toISOString(), steps: [] };
+  // Use PROXY_URL if available (Cloudflare blocks datacenter IPs)
+  let proxyDispatcher = null;
+  const proxyUrl = (process.env.PROXY_URL || '').trim();
+  if (proxyUrl) {
+    try { const { ProxyAgent } = require('undici'); proxyDispatcher = new ProxyAgent(proxyUrl); diag.proxy = proxyUrl.replace(/:[^:@]+@/, ':***@'); } catch {}
+  }
+  const pFetch = (url, opts = {}) => proxyDispatcher ? fetch(url, { ...opts, dispatcher: proxyDispatcher }) : fetch(url, opts);
   try {
     // Step 1: Check KV cookies
     const CF_WORKER_URL = process.env.CF_WORKER_URL || 'https://kisskh-proxy.vitobsfm.workers.dev';
@@ -537,11 +544,11 @@ app.get('/diag/uprot', async (req, res) => {
       return res.json(diag);
     }
 
-    // Step 2: POST to uprot with cookies
+    // Step 2: POST to uprot with cookies (via proxy)
     const cookieStr = `PHPSESSID=${cookies.cookies.PHPSESSID}${cookies.cookies.captcha ? `; captcha=${cookies.cookies.captcha}` : ''}`;
     const captchaAnswer = cookies.data?.captcha || '';
     try {
-      const r = await fetch(uprotUrl, {
+      const r = await pFetch(uprotUrl, {
         method: 'POST',
         headers: {
           'User-Agent': UA,

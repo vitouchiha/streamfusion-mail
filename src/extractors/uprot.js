@@ -24,6 +24,34 @@ const COOKIE_TTL = 22 * 3600 * 1000; // 22h
 const UA = 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36';
 const CF_WORKER_URL = 'https://kisskh-proxy.vitobsfm.workers.dev';
 
+// ─── Proxy-aware fetch for uprot.net ──────────────────────────────────────────
+// Cloudflare blocks datacenter IPs (Vercel, CF Workers) with 403.
+// Use PROXY_URL (residential/rotating proxy) to bypass the block.
+let _proxyDispatcher = null;
+function _getProxyDispatcher() {
+  if (_proxyDispatcher) return _proxyDispatcher;
+  const proxyUrl = (process.env.PROXY_URL || '').trim();
+  if (!proxyUrl) return null;
+  try {
+    const { ProxyAgent } = require('undici');
+    _proxyDispatcher = new ProxyAgent(proxyUrl);
+    console.log('[Uprot] Proxy agent created:', proxyUrl.replace(/:[^:@]+@/, ':***@'));
+    return _proxyDispatcher;
+  } catch (e) {
+    console.warn('[Uprot] Failed to create proxy agent:', e.message);
+    return null;
+  }
+}
+
+/** fetch() wrapper that uses PROXY_URL when available */
+function _proxyFetch(url, opts = {}) {
+  const dispatcher = _getProxyDispatcher();
+  if (dispatcher) {
+    return fetch(url, { ...opts, dispatcher });
+  }
+  return fetch(url, opts);
+}
+
 // Cookie cache per path type (/msf/, /msei/, etc.)
 let _cookieCache = {}; // { '/msf/': { sessid, captchaHash, captchaAnswer, ts }, ... }
 let _kvCacheLoaded = false; // Whether we've tried loading from KV on this instance
@@ -235,7 +263,7 @@ async function _solveCaptcha(solveUrl) {
   for (let attempt = 0; attempt < 3; attempt++) {
     try {
       // 1. POST to uprot page (empty body) → PHPSESSID + captcha image
-      const r1 = await fetch(targetUrl, {
+      const r1 = await _proxyFetch(targetUrl, {
         method: 'POST',
         headers: _headers(targetUrl),
         redirect: 'manual',
@@ -260,7 +288,7 @@ async function _solveCaptcha(solveUrl) {
       console.log('[Uprot] OCR:', ocr.answer, '(' + ocr.method + ')');
 
       // 3. POST captcha answer
-      const r2 = await fetch(targetUrl, {
+      const r2 = await _proxyFetch(targetUrl, {
         method: 'POST',
         headers: { ..._headers(targetUrl), 'Cookie': `PHPSESSID=${sessid}` },
         body: `captcha=${ocr.answer}`,
@@ -323,7 +351,7 @@ async function _bypassUprot(uprotUrl, retried) {
   try {
     const cookieStr = `PHPSESSID=${cookies.sessid}${cookies.captchaHash ? `; captcha=${cookies.captchaHash}` : ''}`;
 
-    const r = await fetch(uprotUrl, {
+    const r = await _proxyFetch(uprotUrl, {
       method: 'POST',
       headers: { ..._headers(uprotUrl), 'Cookie': cookieStr },
       body: `captcha=${cookies.captchaAnswer}`,
@@ -389,7 +417,7 @@ async function _bypassUprot(uprotUrl, retried) {
     // Follow redirect chain through uprots → maxstream
     for (let i = 0; i < 10 && redirect.includes('uprots'); i++) {
       try {
-        const rr = await fetch(redirect, {
+        const rr = await _proxyFetch(redirect, {
           method: 'HEAD',
           headers: { 'User-Agent': UA },
           redirect: 'follow',
@@ -429,7 +457,7 @@ async function _extractMseiUprot(url) {
   for (let attempt = 0; attempt < 5; attempt++) {
     try {
       // 1. GET page → captcha image + token
-      const r1 = await fetch(url, {
+      const r1 = await _proxyFetch(url, {
         method: 'GET',
         headers: _headers(url),
         redirect: 'manual',
@@ -451,7 +479,7 @@ async function _extractMseiUprot(url) {
       console.log('[Uprot/msei] OCR:', ocr.answer, '(' + ocr.method + ')');
 
       // 3. POST with token + capt
-      const r2 = await fetch(url, {
+      const r2 = await _proxyFetch(url, {
         method: 'POST',
         headers: { ..._headers(url), 'Content-Type': 'application/x-www-form-urlencoded' },
         body: `token=${encodeURIComponent(token)}&capt=${encodeURIComponent(ocr.answer)}`,
@@ -502,7 +530,7 @@ async function _extractMseiUprot(url) {
       // Follow redirect chain through uprots → maxstream
       for (let i = 0; i < 10 && redirect.includes('uprots'); i++) {
         try {
-          const rr = await fetch(redirect, {
+          const rr = await _proxyFetch(redirect, {
             method: 'HEAD',
             headers: { 'User-Agent': UA },
             redirect: 'follow',
