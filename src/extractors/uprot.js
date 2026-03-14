@@ -59,8 +59,8 @@ let _kvCacheLoaded = false; // Whether we've tried loading from KV on this insta
 function _getPathType(url) {
   const m = String(url).match(/uprot\.net\/(ms[a-z]+)\//);
   const raw = m ? `/${m[1]}/` : '/msf/';
-  // /msfi/ shares the same captcha session as /msf/
-  if (raw === '/msfi/') return '/msf/';
+  // /msfi/ and /msfld/ share the same captcha session as /msf/
+  if (raw === '/msfi/' || raw === '/msfld/') return '/msf/';
   return raw;
 }
 
@@ -648,7 +648,7 @@ async function extractUprot(uprotUrl) {
  */
 async function fetchUprotPage(url) {
   const cookies = await _getCookies(url);
-  if (!cookies) return null;
+  if (!cookies) { console.log('[Uprot] fetchUprotPage: no cookies'); return null; }
   try {
     const cookieStr = `PHPSESSID=${cookies.sessid}${cookies.captchaHash ? `; captcha=${cookies.captchaHash}` : ''}`;
     const r = await _proxyFetch(url, {
@@ -658,9 +658,10 @@ async function fetchUprotPage(url) {
       redirect: 'manual',
       signal: AbortSignal.timeout(15000),
     });
-    if (!r.ok) return null;
+    console.log('[Uprot] fetchUprotPage: status', r.status);
+    if (r.status >= 400) return null;
     return await r.text();
-  } catch { return null; }
+  } catch (e) { console.log('[Uprot] fetchUprotPage error:', e.message); return null; }
 }
 
 module.exports = { extractUprot, fetchUprotPage };
