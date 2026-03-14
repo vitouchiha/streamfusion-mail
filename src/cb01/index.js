@@ -11,7 +11,7 @@
 const { getProviderUrl } = require('../provider_urls.js');
 const { extractMixDrop } = require('../extractors/mixdrop');
 const { extractMaxStream } = require('../extractors/maxstream');
-const { extractUprot } = require('../extractors/uprot');
+const { extractUprot, fetchUprotPage } = require('../extractors/uprot');
 const { fetchWithCloudscraper } = require('../utils/fetcher');
 const { formatStream } = require('../formatter.js');
 
@@ -297,6 +297,19 @@ async function extractEpisodeStreams(link, providerContext = null) {
           ...(result.headers ? { behaviorHints: { notWebReady: true, proxyHeaders: { request: result.headers } } } : {}),
         }, 'CB01'));
       }
+    } else if (link.includes('maxstream.video')) {
+      const result = await extractMaxStream(link);
+      if (result) {
+        streams.push(formatStream({
+          name: 'CB01 - MaxStream',
+          title: displayTitle,
+          url: result.url,
+          quality: '1080p',
+          type: 'direct',
+          addonBaseUrl: providerContext?.addonBaseUrl,
+          ...(result.headers ? { behaviorHints: { notWebReady: true, proxyHeaders: { request: result.headers } } } : {}),
+        }, 'CB01'));
+      }
     }
   } catch { /* skip */ }
   return streams;
@@ -332,19 +345,28 @@ async function extractSeriesStreams(pageUrl, season, episode, providerContext = 
       return [];
     };
 
-    // Helper: resolve an uprot /msfld/ folder link → individual episode /msfi/ URL
+    // Helper: resolve an uprot /msfld/ folder link → individual episode URL
     const resolveFolder = async (msfldUrl) => {
       try {
-        const folderHtml = await fetchWithCloudscraper(msfldUrl, { referer: 'https://uprot.net/' });
+        // Use proxy-aware fetch with cookies for uprot.net (Cloudflare blocks datacenter IPs)
+        const folderHtml = await fetchUprotPage(msfldUrl);
         if (!folderHtml) return null;
-        // Match rows like: Will.and.Grace.S01E01.ITA.TVRip.avi ... href='...msfi/...'
+        console.log('[CB01] Folder HTML length:', folderHtml.length);
         const seasonPad = seasonStr.padStart(2, '0');
+        // Try matching episode row → /msfi/ link
         const epPat = new RegExp(
           `S${seasonPad}E${episodePadded}[\\s\\S]*?href=['"]([^'"]*msfi\\/[^'"]+)['"]`,
           'i'
         );
         const m = epPat.exec(folderHtml);
-        return m ? m[1] : null;
+        if (m) return m[1];
+        // Fallback: episode row → any uprot or maxstream link
+        const epPat2 = new RegExp(
+          `S${seasonPad}E${episodePadded}[\\s\\S]*?href=['"]([^'"]*(?:uprot\\.net|maxstream\\.video)\\/[^'"]+)['"]`,
+          'i'
+        );
+        const m2 = epPat2.exec(folderHtml);
+        return m2 ? m2[1] : null;
       } catch { return null; }
     };
 

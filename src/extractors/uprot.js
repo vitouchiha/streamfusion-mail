@@ -387,7 +387,7 @@ async function _bypassUprot(uprotUrl, retried) {
 
     // Last resort: all uprots/uprotem/maxstream redirect URLs in clean HTML
     if (!redirect) {
-      const allUprots = [...cleanHtml.matchAll(/href=["'](https?:\/\/[^"']*(?:uprot(?:s|em)|maxstream\.video\/uprots)\/[^"']+)["']/gi)].map(m => m[1]);
+      const allUprots = [...cleanHtml.matchAll(/href=["'](https?:\/\/[^"']*(?:uprot(?:s|em)|maxstream\.video)\/[^"']+)["']/gi)].map(m => m[1]);
       const counts = {};
       for (const u of allUprots) counts[u] = (counts[u] || 0) + 1;
       redirect = allUprots.find(u => counts[u] === 1) || null;
@@ -641,5 +641,27 @@ async function extractUprot(uprotUrl) {
   }
 }
 
-module.exports = { extractUprot };
+/**
+ * Fetch an uprot.net page with valid cookies + proxy.
+ * Used by CB01 to resolve /msfld/ folder listings.
+ * Returns HTML string or null.
+ */
+async function fetchUprotPage(url) {
+  const cookies = await _getCookies(url);
+  if (!cookies) return null;
+  try {
+    const cookieStr = `PHPSESSID=${cookies.sessid}${cookies.captchaHash ? `; captcha=${cookies.captchaHash}` : ''}`;
+    const r = await _proxyFetch(url, {
+      method: 'POST',
+      headers: { ..._headers(url), 'Cookie': cookieStr },
+      body: `captcha=${cookies.captchaAnswer}`,
+      redirect: 'manual',
+      signal: AbortSignal.timeout(15000),
+    });
+    if (!r.ok) return null;
+    return await r.text();
+  } catch { return null; }
+}
+
+module.exports = { extractUprot, fetchUprotPage };
 
