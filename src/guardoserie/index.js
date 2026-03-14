@@ -10,7 +10,7 @@ const mapping = require('../mapping/index');
 function getGuardoserieBaseUrl() {
     return getProviderUrl('guardoserie');
 }
-const TMDB_API_KEY = '68e094699525b18a70bab2f86b1fa706';
+const { TMDB_API_KEY } = require('../utils/config');
 
 // ── Proxy + CookieJar helper (like StreamVix) ─────────────────────────────
 const _cookieJar = new CookieJar();

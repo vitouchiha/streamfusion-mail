@@ -885,7 +885,7 @@ app.get('/debug/providers-stream', requireDebugAuth, async (req, res) => {
     }
     try {
       const { findTitleByImdbId } = require('./src/utils/tmdb');
-      const tmdbKey = process.env.TMDB_API_KEY || '6e0a84ca7b324763793422a6656d34ff';
+      const tmdbKey = process.env.TMDB_API_KEY || DEFAULT_CONFIG.tmdbKey;
       const title = await findTitleByImdbId(imdbId, tmdbKey);
       if (title) {
         out.source = 'tmdb';
@@ -934,7 +934,7 @@ app.get('/debug/providers-stream', requireDebugAuth, async (req, res) => {
   const providersApi = getProvidersApi();
   const legacyConfig = {
     cinemeta: true,
-    tmdbKey: process.env.TMDB_API_KEY || '6e0a84ca7b324763793422a6656d34ff',
+    tmdbKey: process.env.TMDB_API_KEY || DEFAULT_CONFIG.tmdbKey,
     enableLegacyEngine: false,
     imdbJobTimeout: Math.max(1500, timeoutMs),
   };

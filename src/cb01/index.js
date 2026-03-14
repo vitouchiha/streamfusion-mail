@@ -14,8 +14,7 @@ const { extractMaxStream } = require('../extractors/maxstream');
 const { extractUprot, fetchUprotPage } = require('../extractors/uprot');
 const { fetchWithCloudscraper } = require('../utils/fetcher');
 const { formatStream } = require('../formatter.js');
-
-const TMDB_API_KEY = '68e094699525b18a70bab2f86b1fa706';
+const { TMDB_API_KEY } = require('../utils/config');
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36';
 
 function getCb01BaseUrl() {

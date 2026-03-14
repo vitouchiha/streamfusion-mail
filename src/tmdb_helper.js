@@ -1,4 +1,4 @@
-const TMDB_API_KEY = "68e094699525b18a70bab2f86b1fa706";
+const { TMDB_API_KEY } = require('./utils/config');
 const internalMapping = require("./mapping/index");
 
 async function resolveTmdbFromKitsu(kitsuId) {

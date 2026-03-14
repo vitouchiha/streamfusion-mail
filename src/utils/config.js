@@ -166,4 +166,7 @@ function isValidConfig(str) {
   }
 }
 
-module.exports = { encodeConfig, decodeConfig, isValidConfig, DEFAULT_CONFIG };
+// Centralised TMDB key — all modules should import this instead of hardcoding.
+const TMDB_API_KEY = process.env.TMDB_API_KEY || DEFAULT_CONFIG.tmdbKey;
+
+module.exports = { encodeConfig, decodeConfig, isValidConfig, DEFAULT_CONFIG, TMDB_API_KEY };

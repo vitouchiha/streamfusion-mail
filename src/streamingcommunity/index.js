@@ -11,7 +11,7 @@ require('../fetch_helper.js');
 const { checkQualityFromText } = require('../quality_helper.js');
 const { getProxyAgent } = require('../utils/fetcher.js');
 const axios = require('axios');
-const TMDB_API_KEY = "68e094699525b18a70bab2f86b1fa706";
+const { TMDB_API_KEY } = require('../utils/config');
 const USER_AGENT = "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36";
 
 /**

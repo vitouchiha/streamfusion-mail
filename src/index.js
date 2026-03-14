@@ -14,7 +14,7 @@ const { createTimeoutSignal } = require('./fetch_helper.js');
 const { wrapProviderStreamsWithMfp } = require('./utils/mediaflow');
 const mapping = require('./mapping/index');
 
-const TMDB_API_KEY = '68e094699525b18a70bab2f86b1fa706';
+const { TMDB_API_KEY } = require('./utils/config');
 const CONTEXT_TIMEOUT = 3000;
 
 async function fetchJsonWithTimeout(url, timeoutMs = CONTEXT_TIMEOUT) {

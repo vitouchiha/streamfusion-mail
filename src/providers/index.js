@@ -28,6 +28,7 @@ const easystreams = require('../index');
 const { withTimeout } = require('../utils/fetcher');
 const { titleSimilarity } = require('../utils/titleHelper');
 const { findTitleByImdbId } = require('../utils/tmdb');
+const { TMDB_API_KEY } = require('../utils/config');
 const { createLogger } = require('../utils/logger');
 
 const log = createLogger('aggregator');
@@ -312,7 +313,7 @@ async function _fetchFromImdbId(rawId, type, config) {
 
   // Fallback #1: TMDB find endpoint
   if (!title) {
-    const tmdbKey = config.tmdbKey || process.env.TMDB_API_KEY || '68e094699525b18a70bab2f86b1fa706';
+    const tmdbKey = config.tmdbKey || process.env.TMDB_API_KEY || TMDB_API_KEY;
     title = await findTitleByImdbId(imdbId, tmdbKey).catch(() => null);
   }
 

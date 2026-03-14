@@ -1,6 +1,6 @@
 // TMDB Client Adapter with it-IT priority
 const fetcher = require('../utils/fetcher');
-const TMDB_API_KEY = '6e0a84ca7b324763793422a6656d34ff';
+const { TMDB_API_KEY } = require('../utils/config');
 const BASE_URL = 'https://api.themoviedb.org/3';
 const IMAGE_BASE_URL = 'https://image.tmdb.org/t/p/w500'; // Using w500 as default from configuration endpoint
 

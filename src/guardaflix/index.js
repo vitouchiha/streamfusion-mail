@@ -5,7 +5,7 @@ const { extractFromUrl } = require('../extractors');
 const { formatStream } = require('../formatter.js');
 
 const USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36';
-const TMDB_API_KEY = '68e094699525b18a70bab2f86b1fa706';
+const { TMDB_API_KEY } = require('../utils/config');
 
 // WordPress nonce for admin-ajax search action (long-lived on this site)
 const SEARCH_NONCE = '20115729b4';

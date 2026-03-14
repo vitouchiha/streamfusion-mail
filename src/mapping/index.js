@@ -16,7 +16,7 @@ const { getProviderUrl } = require("../provider_urls.js");
 const cloudscraper = require("cloudscraper");
 const animeList = require("./anime_list.js");
 
-const TMDB_API_KEY = "68e094699525b18a70bab2f86b1fa706";
+const { TMDB_API_KEY } = require('../utils/config');
 const UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0.0.0 Safari/537.36";
 
 // ─── Cache ────────────────────────────────────────────────────────────────────
