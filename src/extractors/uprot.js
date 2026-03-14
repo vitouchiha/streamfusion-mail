@@ -26,10 +26,60 @@ const CF_WORKER_URL = 'https://kisskh-proxy.vitobsfm.workers.dev';
 
 // Cookie cache per path type (/msf/, /msei/, etc.)
 let _cookieCache = {}; // { '/msf/': { sessid, captchaHash, captchaAnswer, ts }, ... }
+let _kvCacheLoaded = false; // Whether we've tried loading from KV on this instance
 
 function _getPathType(url) {
   const m = String(url).match(/uprot\.net\/(ms[a-z]+)\//);
   return m ? `/${m[1]}/` : '/msf/';
+}
+
+/**
+ * Load cookies from CF Worker KV (persists across Vercel cold starts).
+ */
+async function _loadCookiesFromKv() {
+  if (_kvCacheLoaded) return;
+  _kvCacheLoaded = true;
+  const auth = process.env.CF_WORKER_AUTH || '';
+  if (!auth) return;
+  try {
+    const resp = await fetch(`${CF_WORKER_URL}/?uprot_kv=1&auth=${encodeURIComponent(auth)}`, {
+      signal: AbortSignal.timeout(8000),
+    });
+    if (!resp.ok) return;
+    const data = await resp.json();
+    if (data.cookies && data.data && data.t && (Date.now() - data.t) < COOKIE_TTL) {
+      // Convert CF Worker format to local format
+      const sessid = data.cookies.PHPSESSID || '';
+      const captchaHash = data.cookies.captcha || '';
+      const captchaAnswer = data.data.captcha || '';
+      if (sessid) {
+        _cookieCache['/msf/'] = { sessid, captchaHash, captchaAnswer, ts: data.t };
+        console.log('[Uprot] Loaded cookies from KV (age:', Math.round((Date.now() - data.t) / 60000), 'min)');
+      }
+    }
+  } catch (e) {
+    console.warn('[Uprot] KV load failed:', e.message);
+  }
+}
+
+/**
+ * Save cookies to CF Worker KV (persists across Vercel cold starts).
+ */
+async function _saveCookiesToKv(cookies) {
+  const auth = process.env.CF_WORKER_AUTH || '';
+  if (!auth) return;
+  try {
+    await fetch(`${CF_WORKER_URL}/?uprot_kv=1&auth=${encodeURIComponent(auth)}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        cookies: { PHPSESSID: cookies.sessid, captcha: cookies.captchaHash },
+        data: { captcha: cookies.captchaAnswer },
+        t: cookies.ts,
+      }),
+      signal: AbortSignal.timeout(5000),
+    }).catch(() => {});
+  } catch { /* best effort */ }
 }
 
 function _headers(referer) {
@@ -106,7 +156,8 @@ async function _ocrCaptcha(b64) {
 
     // OCR each digit individually (sequential to avoid CF Worker AI timeout)
     const auth = process.env.CF_WORKER_AUTH || '';
-    const digitResults = [];
+    // Build digit images first, then OCR in parallel for speed
+    const digitPngs = [];
     for (const [s, e] of digitSegs) {
       // Find vertical bounds
       let top = -1, bot = -1;
@@ -115,7 +166,7 @@ async function _ocrCaptcha(b64) {
         for (let x = s; x <= e; x++) if (pixels[y * width + x] < threshold) d++;
         if (d > 0) { if (top < 0) top = y; bot = y; }
       }
-      if (top < 0) { digitResults.push('?'); continue; }
+      if (top < 0) { digitPngs.push(null); continue; }
 
       // Create clean digit image with padding
       const pad = 4;
@@ -127,17 +178,23 @@ async function _ocrCaptcha(b64) {
           dp[(y - top + pad) * dw + (x - s + pad)] = pixels[y * width + x] < threshold ? 0 : 255;
         }
       }
-      const png = encodePngGrayscale(dw, dh, dp);
-
-      const resp = await fetch(`${CF_WORKER_URL}/?ocr_digits=1&auth=${auth}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ image: png.toString('base64'), expectedDigits: 1 }),
-        signal: AbortSignal.timeout(45000),
-      });
-      const data = await resp.json();
-      digitResults.push(data?.answer || '?');
+      digitPngs.push(encodePngGrayscale(dw, dh, dp));
     }
+
+    // OCR all digits in parallel (faster than sequential)
+    const digitResults = await Promise.all(digitPngs.map(async (png) => {
+      if (!png) return '?';
+      try {
+        const resp = await fetch(`${CF_WORKER_URL}/?ocr_digits=1&auth=${auth}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ image: png.toString('base64'), expectedDigits: 1 }),
+          signal: AbortSignal.timeout(30000),
+        });
+        const data = await resp.json();
+        return data?.answer || '?';
+      } catch { return '?'; }
+    }));
 
     const answer = digitResults.join('');
     if (answer && !answer.includes('?') && answer.length >= 2) {
@@ -229,6 +286,8 @@ async function _solveCaptcha(solveUrl) {
       };
       _cookieCache[pathType] = cookies;
       console.log('[Uprot] Captcha solved:', ocr.answer, 'for', pathType);
+      // Persist to KV for cross-invocation cache
+      if (pathType === '/msf/') _saveCookiesToKv(cookies);
       return cookies;
     } catch (e) {
       console.warn('[Uprot] Solve attempt', attempt, 'error:', e.message);
@@ -237,11 +296,15 @@ async function _solveCaptcha(solveUrl) {
   return null;
 }
 
-/** Get valid cookies for the given URL's path type (from cache or solve fresh). */
+/** Get valid cookies for the given URL's path type (from cache, KV, or solve fresh). */
 async function _getCookies(targetUrl) {
   const pathType = _getPathType(targetUrl || UPROT_INIT_URL);
   const cached = _cookieCache[pathType];
   if (cached && (Date.now() - cached.ts) < COOKIE_TTL) return cached;
+  // Try loading from KV (persists across Vercel cold starts)
+  await _loadCookiesFromKv();
+  const kvCached = _cookieCache[pathType];
+  if (kvCached && (Date.now() - kvCached.ts) < COOKIE_TTL) return kvCached;
   // For /msf/ use the fixed init URL; for others solve on the actual target URL
   return _solveCaptcha(pathType === '/msf/' ? undefined : targetUrl);
 }
@@ -456,6 +519,7 @@ async function _extractMseiUprot(url) {
 
 /**
  * Main entry: resolve an uprot.net link to a playable video URL.
+ * Uses KV-persisted cookies when available (fast path), solves fresh captcha as fallback.
  * Returns { url, headers } or null.
  */
 async function extractUprot(uprotUrl) {

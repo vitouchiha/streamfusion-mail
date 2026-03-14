@@ -248,9 +248,9 @@ export default {
       return _handleUprotDiag(env);
     }
 
-    // ── Uprot diagnostic: fetch captcha page and return raw analysis ──
-    if (url.searchParams.get('uprot_diag') === '1') {
-      return _handleUprotDiag(env);
+    // ── Uprot KV cookie cache: get/set cookies from external callers ──
+    if (url.searchParams.get('uprot_kv') === '1') {
+      return _handleUprotKv(request, env);
     }
 
     // ── Uprot solve only: solve captcha and cache cookies (no url needed) ──
@@ -1798,16 +1798,38 @@ async function _uprotBypassWithCookies(uprotUrl, cookies, captchaData, env) {
       signal: AbortSignal.timeout(10000),
     });
 
-    const body = await resp.text();
+    const rawBody = await resp.text();
 
-    // Find the "C O N T I N U E" link
-    const continueMatch = /<a[^>]+href="([^"]+)"[^>]*>[^<]*C\s*O\s*N\s*T\s*I\s*N\s*U\s*E[^<]*<\/a>/i.exec(body);
-    if (!continueMatch) return null;
+    // Strip honeypots: display:none blocks and HTML comments
+    const body = rawBody
+      .replace(/<!--[\s\S]*?-->/g, '')
+      .replace(/<div[^>]*style=["'][^"']*display\s*:\s*none[^"']*["'][^>]*>[\s\S]*?<\/div>/gi, '');
 
-    let maxstreamUrl = continueMatch[1];
+    // Find the REAL redirect link (buttok button or CONTINUE text)
+    let maxstreamUrl = null;
 
-    // Follow redirects from uprots domain to maxstream
-    if (maxstreamUrl.includes('uprots')) {
+    // Primary: <a href="..."><button id="buttok">C O N T I N U E</button></a>
+    const buttokMatch = body.match(/href=["'](https?:\/\/[^"']+)["'][^>]*>\s*<button[^>]*id=["']buttok["'][^>]*>\s*C\s*O\s*N\s*T\s*I\s*N\s*U\s*E/i);
+    if (buttokMatch) maxstreamUrl = buttokMatch[1];
+
+    // Fallback: <a href="..."><button>C o n t i n u e</button></a>
+    if (!maxstreamUrl) {
+      const contMatch = body.match(/href=["'](https?:\/\/[^"']+)["'][^>]*>\s*<button[^>]*>\s*C\s+[oO]\s+[nN]\s+[tT]\s+[iI]\s+[nN]\s+[uU]\s+[eE]\s*<\/button>/i);
+      if (contMatch) maxstreamUrl = contMatch[1];
+    }
+
+    // Last resort: unique uprots/uprotem URL
+    if (!maxstreamUrl) {
+      const allUprots = [...body.matchAll(/href=["'](https?:\/\/[^"']*uprot(?:s|em)\/[^"']+)["']/gi)].map(m => m[1]);
+      const counts = {};
+      for (const u of allUprots) counts[u] = (counts[u] || 0) + 1;
+      maxstreamUrl = allUprots.find(u => counts[u] === 1) || null;
+    }
+
+    if (!maxstreamUrl) return null;
+
+    // Follow redirects from uprots/uprotem domain to maxstream
+    if (maxstreamUrl.includes('uprots') || maxstreamUrl.includes('uprotem')) {
       for (let hop = 0; hop < 10; hop++) {
         const redir = await fetch(maxstreamUrl, {
           headers: { 'User-Agent': _UPROT_UA },
@@ -1826,7 +1848,7 @@ async function _uprotBypassWithCookies(uprotUrl, cookies, captchaData, env) {
           break;
         }
         maxstreamUrl = new URL(loc, maxstreamUrl).href;
-        if (!maxstreamUrl.includes('uprots')) break;
+        if (!maxstreamUrl.includes('uprots') && !maxstreamUrl.includes('uprotem')) break;
       }
     }
 
@@ -1938,6 +1960,36 @@ async function _handleUprotSolve(env) {
   const solved = await _uprotSolveFresh(env);
   if (solved) return _json({ ok: true, answer: solved.answer, method: solved.method, cookies: solved.cookies, attempts: solved.attempts });
   return _json({ error: 'Captcha solve failed', attempts: solved?.attempts || [] }, 502);
+}
+
+/**
+ * KV cookie cache: allow external callers (Vercel) to get/set uprot cookies.
+ * GET  ?uprot_kv=1  → read cookies from KV
+ * POST ?uprot_kv=1  → write cookies to KV (body: JSON with cookies, data, t)
+ */
+async function _handleUprotKv(request, env) {
+  if (!env?.ES_CACHE) return _json({ error: 'KV not available' }, 500);
+
+  if (request.method === 'POST') {
+    try {
+      const body = await request.json();
+      if (!body.cookies || !body.data) return _json({ error: 'Missing cookies or data' }, 400);
+      const kvData = { cookies: body.cookies, data: body.data, t: body.t || Date.now() };
+      await env.ES_CACHE.put(_UPROT_COOKIES_KEY, JSON.stringify(kvData), { expirationTtl: 86400 });
+      return _json({ ok: true, stored: true });
+    } catch (e) {
+      return _json({ error: `KV write failed: ${e.message}` }, 500);
+    }
+  }
+
+  // GET → read
+  try {
+    const cached = await env.ES_CACHE.get(_UPROT_COOKIES_KEY, 'json');
+    if (!cached) return _json({ cookies: null });
+    return _json(cached);
+  } catch (e) {
+    return _json({ error: `KV read failed: ${e.message}` }, 500);
+  }
 }
 
 /**
