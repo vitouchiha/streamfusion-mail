@@ -522,6 +522,20 @@ app.get('/diag/uprot', async (req, res) => {
   }
   const pFetch = (url, opts = {}) => proxyDispatcher ? fetch(url, { ...opts, dispatcher: proxyDispatcher }) : fetch(url, opts);
   try {
+    // Step 0: Verify proxy works by checking external IP
+    if (proxyDispatcher) {
+      try {
+        const ipResp = await pFetch('https://api.ipify.org?format=json', { signal: AbortSignal.timeout(10000) });
+        const ipData = await ipResp.json();
+        diag.steps.push({ step: 'proxy_ip_check', ok: true, ip: ipData.ip });
+      } catch (e) { diag.steps.push({ step: 'proxy_ip_check', ok: false, error: e.message }); }
+    }
+    // Also check direct IP for comparison
+    try {
+      const directIpResp = await fetch('https://api.ipify.org?format=json', { signal: AbortSignal.timeout(10000) });
+      const directIp = await directIpResp.json();
+      diag.steps.push({ step: 'direct_ip', ip: directIp.ip });
+    } catch (e) { diag.steps.push({ step: 'direct_ip', error: e.message }); }
     // Step 1: Check KV cookies
     const CF_WORKER_URL = process.env.CF_WORKER_URL || 'https://kisskh-proxy.vitobsfm.workers.dev';
     const auth = process.env.CF_WORKER_AUTH || '';
