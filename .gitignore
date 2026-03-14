@@ -57,8 +57,6 @@ temp_*.js
 update_ui_clean.js
 update2.js
 src/index_debug*.js
-src/formatter.js
-src/fetch_helper.js
 
 # Other
 upload_hf.js
