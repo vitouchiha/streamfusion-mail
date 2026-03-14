@@ -29,7 +29,9 @@ const defaultProviderUrlsFile =
 const PROVIDER_URLS_FILE = defaultProviderUrlsFile;
 const RELOAD_INTERVAL_MS = 1500;
 const PROVIDER_URLS_URL = "https://raw.githubusercontent.com/realbestia1/easystreams/refs/heads/main/provider_urls.json";
+const CF_WORKER_DOMAINS_URL = "https://kisskh-proxy.vitobsfm.workers.dev/?provider_urls=1";
 const REMOTE_RELOAD_INTERVAL_MS = 10000;
+const CF_WORKER_RELOAD_INTERVAL_MS = 60000; // check CF Worker every 60s
 const REMOTE_FETCH_TIMEOUT_MS = 5000;
 
 const ALIASES = {
@@ -46,13 +48,16 @@ const ALIASES = {
 let lastCheckAt = 0;
 let lastMtimeMs = -1;
 let localOverrides = {};   // from local provider_urls.json (highest priority)
-let remoteData = {};       // from remote GitHub URL
-let lastData = {};         // merged: remoteData overridden by localOverrides
+let cfWorkerData = {};     // from our CF Worker domain resolver (high priority)
+let remoteData = {};       // from remote GitHub URL (baseline)
+let lastData = {};         // merged: remoteData < cfWorkerData < localOverrides
 let lastRemoteCheckAt = 0;
+let lastCfWorkerCheckAt = 0;
 let remoteInFlight = null;
+let cfWorkerInFlight = null;
 
 function rebuildMergedData() {
-  lastData = { ...remoteData, ...localOverrides };
+  lastData = { ...remoteData, ...cfWorkerData, ...localOverrides };
 }
 
 function normalizeKey(key) {
@@ -178,6 +183,7 @@ async function refreshProviderUrlsFromRemoteIfNeeded(force = false) {
 function findFromJson(providerKey) {
   reloadProviderUrlsIfNeeded(false);
   refreshProviderUrlsFromRemoteIfNeeded(false);
+  refreshFromCfWorkerIfNeeded(false);
   const key = normalizeKey(providerKey);
   const candidates = [key, ...(ALIASES[key] || [])].map(normalizeKey);
   for (const candidate of candidates) {
@@ -210,3 +216,44 @@ module.exports = {
 // Initialize from embedded JSON immediately.
 localOverrides = toNormalizedMap(embeddedProviderUrls);
 rebuildMergedData();
+
+// ── CF Worker domain resolver fetch ─────────────────────────────────────────
+async function refreshFromCfWorkerIfNeeded(force = false) {
+  if (!CF_WORKER_DOMAINS_URL) return;
+  if (cfWorkerInFlight) return;
+
+  const now = Date.now();
+  if (!force && now - lastCfWorkerCheckAt < CF_WORKER_RELOAD_INTERVAL_MS) return;
+  lastCfWorkerCheckAt = now;
+
+  const fetchImpl = getFetchImpl();
+  if (!fetchImpl) return;
+
+  cfWorkerInFlight = (async () => {
+    const timeoutConfig = createTimeoutSignal(REMOTE_FETCH_TIMEOUT_MS);
+    try {
+      const response = await fetchImpl(CF_WORKER_DOMAINS_URL, {
+        signal: timeoutConfig.signal,
+        headers: { "accept": "application/json" },
+      });
+      if (!response || !response.ok) return;
+      const payload = await response.json();
+      // Strip internal metadata keys
+      const clean = {};
+      for (const [k, v] of Object.entries(payload)) {
+        if (k.startsWith('_')) continue;
+        clean[k] = v;
+      }
+      const parsed = toNormalizedMap(clean);
+      if (Object.keys(parsed).length > 0) {
+        cfWorkerData = parsed;
+        rebuildMergedData();
+      }
+    } catch {
+      // Ignore — keep last known CF Worker data
+    } finally {
+      if (typeof timeoutConfig.cleanup === "function") timeoutConfig.cleanup();
+      cfWorkerInFlight = null;
+    }
+  })();
+}

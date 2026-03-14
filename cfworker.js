@@ -31,9 +31,10 @@
  */
 
 export default {
-  // ── Scheduled cron: auto-refresh Eurostreaming cache ──────────────────
+  // ── Scheduled cron: auto-refresh Eurostreaming cache + domain updates ──
   async scheduled(event, env, ctx) {
     ctx.waitUntil(_handleScheduledWarm(env));
+    ctx.waitUntil(_handleScheduledDomainUpdate(env));
   },
 
   async fetch(request, env, ctx) {
@@ -50,6 +51,16 @@ export default {
           'Access-Control-Max-Age': '86400',
         },
       });
+    }
+
+    // ── Provider URLs: public endpoint (no auth needed) ───────────────────
+    if (url.searchParams.get('provider_urls') === '1') {
+      if (!env?.ES_CACHE) return _json({ error: 'KV not available' }, 500);
+      try {
+        const data = await env.ES_CACHE.get('domains:urls', 'json');
+        if (!data) return _json({ error: 'No domain data yet — cron not run' }, 404);
+        return _json(data);
+      } catch (e) { return _json({ error: e.message }, 500); }
     }
 
     // ── Auth check (skip if AUTH_TOKEN not set) ─────────────────────────────
@@ -165,6 +176,13 @@ export default {
       results.cfPop = url.searchParams.get('_cf_pop') || 'unknown';
 
       return _json(results);
+    }
+
+    // ── Force domain update (manual trigger) ─────────────────────────────
+    if (url.searchParams.get('update_domains') === '1') {
+      if (!env?.ES_CACHE) return _json({ error: 'KV not available' }, 500);
+      const result = await _resolveDomains(env);
+      return _json(result);
     }
 
     // ── KV test endpoint ────────────────────────────────────────────────────
@@ -1241,4 +1259,246 @@ async function _handleEsStream(deltaUrl, reqUrl, env) {
   } catch (err) {
     return _json({ error: `ES stream error: ${err.message}` }, 502);
   }
+}
+
+// ─── Domain Auto-Update System ──────────────────────────────────────────────
+
+const _DOMAIN_COOLDOWN_MS = 24 * 3600 * 1000; // 24h between full checks
+const _DOMAIN_STATE_CACHE_KEY = 'https://internal.worker/domain-state';
+const _DOMAIN_KV_KEY = 'domains:urls';
+const _DOMAIN_KV_TTL = 172800; // 48h expiry in KV (safety net)
+
+const _UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
+
+// ── Community sources ────────────────────────────────────────────────────────
+const _COMMUNITY_SOURCES = [
+  {
+    name: 'easystreams',
+    url: 'https://raw.githubusercontent.com/realbestia1/easystreams/refs/heads/main/provider_urls.json',
+    parse(data) { return data; }, // already { key: url }
+  },
+  {
+    name: 'mammamia',
+    url: 'https://raw.githubusercontent.com/UrloMythus/MammaMia/main/config.json',
+    parse(data) {
+      const siti = data?.Siti || {};
+      const KEY_MAP = {
+        StreamingCommunity: 'streamingcommunity',
+        AnimeSaturn: 'animesaturn',
+        AnimeWorld: 'animeworld',
+        AnimeUnity: 'animeunity',
+        CB01: 'cb01',
+        Guardaserie: 'guardaserie',
+        GuardoSerie: 'guardoserie',
+        Guardoserie: 'guardoserie',
+        GuardaHD: 'guardahd',
+        Eurostreaming: 'eurostreaming',
+        ToonItalia: 'toonitalia',
+        Toonitalia: 'toonitalia',
+        Guardaflix: 'guardaflix',
+      };
+      const out = {};
+      for (const [name, info] of Object.entries(siti)) {
+        const key = KEY_MAP[name];
+        if (key && info?.url) out[key] = info.url;
+      }
+      return out;
+    },
+  },
+];
+
+// ── Known alternate domains per provider (fallback probing) ──────────────────
+const _KNOWN_DOMAINS = {
+  streamingcommunity: ['streamingcommunity.computer', 'vixsrc.to', 'streamingcommunity.bond'],
+  cb01:              ['cb01uno.digital', 'cb01uno.life', 'cb01.uno', 'cb01uno.uno'],
+  guardaserie:       ['guardaserietv.skin', 'guardaserietv.autos', 'guardaserietv.asia', 'guardaserie.cfd'],
+  guardoserie:       ['guardoserie.best', 'guardoserie.digital', 'guardoserie.surf', 'guardoserie.bar', 'guardoserie.blog'],
+  eurostreaming:     ['eurostream.ing', 'eurostreamings.life'],
+  toonitalia:        ['toonitalia.xyz', 'toonitalia.co'],
+  animeunity:        ['www.animeunity.so', 'www.animeunity.to'],
+  animeworld:        ['www.animeworld.ac', 'www.animeworld.so', 'www.animeworld.tv'],
+  animesaturn:       ['www.animesaturn.cx', 'www.animesaturn.dev'],
+  guardahd:          ['mostraguarda.stream', 'guardahd.stream'],
+  guardaflix:        ['guardaplay.space', 'guardaplay.blog'],
+  loonex:            ['loonex.eu'],
+};
+
+// ── HTML markers to fingerprint each provider (avoids parking pages) ─────────
+const _SITE_MARKERS = {
+  streamingcommunity: ['sliders-title', '/titles/', 'StreamingCommunity'],
+  cb01:              ['cb01', 'film-', 'genere'],
+  guardaserie:       ['guardaserie', '/serie/', 'stagion'],
+  guardoserie:       ['guardoserie', '/serie/', 'stagion'],
+  eurostreaming:     ['eurostream', 'wp-content', 'serie-tv'],
+  toonitalia:        ['toonitalia', 'cartoon', 'anime'],
+  animeunity:        ['animeunity', 'anime', 'episodi'],
+  animeworld:        ['animeworld', 'anime', 'episodi'],
+  animesaturn:       ['animesaturn', 'anime', 'episod'],
+  guardahd:          ['guardahd', 'mostraguarda', 'film'],
+  guardaflix:        ['guardaflix', 'guardaplay', 'film'],
+  loonex:            ['loonex', 'stream'],
+};
+
+/** Validate a domain: HEAD→follow redirects, check HTML markers */
+async function _domainProbe(url, provider) {
+  try {
+    const resp = await fetch(url, {
+      method: 'GET',
+      redirect: 'follow',
+      headers: {
+        'User-Agent': _UA,
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+        'Accept-Language': 'it-IT,it;q=0.9,en;q=0.7',
+      },
+      signal: AbortSignal.timeout(10000),
+    });
+    // Status 200 or 403 (CF challenge but domain alive)
+    if (!resp.ok && resp.status !== 403) return null;
+
+    const finalUrl = new URL(resp.url);
+    const origin = `${finalUrl.protocol}//${finalUrl.host}`;
+
+    // Quick HTML check if we got a 200
+    if (resp.ok) {
+      const html = await resp.text();
+      const markers = _SITE_MARKERS[provider] || [];
+      const lower = html.toLowerCase();
+      // At least one marker must be present (or no markers defined)
+      if (markers.length > 0 && !markers.some(m => lower.includes(m.toLowerCase()))) {
+        // Might be a parking/expired page
+        return null;
+      }
+    }
+    return origin;
+  } catch { /* DNS fail, timeout, etc. */ }
+  return null;
+}
+
+/** Fetch all community sources, merge into { provider: [url1, url2, ...] } */
+async function _fetchAllCommunitySources() {
+  const merged = {};
+  const fetches = _COMMUNITY_SOURCES.map(async (src) => {
+    try {
+      const resp = await fetch(src.url, {
+        headers: { 'Accept': 'application/json', 'User-Agent': _UA },
+        signal: AbortSignal.timeout(10000),
+      });
+      if (!resp.ok) return;
+      const data = await resp.json();
+      const parsed = src.parse(data);
+      if (!parsed || typeof parsed !== 'object') return;
+      for (const [k, v] of Object.entries(parsed)) {
+        const key = k.toLowerCase().trim();
+        const val = String(v || '').trim().replace(/\/+$/, '');
+        if (!key || !val || key === 'mapping_api') continue;
+        if (!merged[key]) merged[key] = [];
+        if (!merged[key].includes(val)) merged[key].push(val);
+      }
+    } catch { /* source failed — continue */ }
+  });
+  await Promise.all(fetches);
+  return merged;
+}
+
+/** Main resolver: community sources + redirect following + domain probing */
+async function _resolveDomains(env) {
+  const community = await _fetchAllCommunitySources();
+  const resolved = {};
+  const details = {};
+
+  // Merge all providers we know about
+  const providers = new Set([
+    ...Object.keys(community),
+    ...Object.keys(_KNOWN_DOMAINS),
+  ]);
+
+  // Load previous results from KV as baseline
+  let previous = {};
+  if (env?.ES_CACHE) {
+    try { previous = (await env.ES_CACHE.get(_DOMAIN_KV_KEY, 'json')) || {}; } catch {}
+  }
+
+  for (const provider of providers) {
+    // Build candidate list: community URLs first, then known alternates
+    const candidates = [];
+    if (community[provider]) candidates.push(...community[provider]);
+    if (_KNOWN_DOMAINS[provider]) {
+      for (const d of _KNOWN_DOMAINS[provider]) {
+        const u = d.startsWith('http') ? d : `https://${d}`;
+        if (!candidates.includes(u)) candidates.push(u);
+      }
+    }
+    // Also add the previously resolved domain if not already in the list
+    if (previous[provider] && !candidates.includes(previous[provider])) {
+      candidates.push(previous[provider]);
+    }
+
+    // If all community sources agree, trust them without probing
+    const uniqueUrls = [...new Set(candidates)];
+    if (uniqueUrls.length === 1) {
+      resolved[provider] = uniqueUrls[0];
+      details[provider] = { url: uniqueUrls[0], method: 'consensus' };
+      continue;
+    }
+
+    // Multiple candidates — validate the community favorite first, then others
+    let found = false;
+    for (const candidate of candidates) {
+      const validUrl = await _domainProbe(candidate, provider);
+      if (validUrl) {
+        resolved[provider] = validUrl;
+        details[provider] = { url: validUrl, method: 'validated', from: candidate };
+        found = true;
+        break;
+      }
+    }
+
+    // Fallback: use community first choice even without validation
+    if (!found && candidates.length > 0) {
+      resolved[provider] = candidates[0];
+      details[provider] = { url: candidates[0], method: 'fallback' };
+    }
+  }
+
+  // Store in KV
+  const result = { ...resolved, _updated: new Date().toISOString(), _details: details };
+  if (env?.ES_CACHE) {
+    try {
+      await env.ES_CACHE.put(_DOMAIN_KV_KEY, JSON.stringify(result), { expirationTtl: _DOMAIN_KV_TTL });
+    } catch { /* KV write failed */ }
+  }
+
+  return result;
+}
+
+// ── Scheduled domain update (24h cooldown) ───────────────────────────────────
+async function _getDomainState() {
+  try {
+    const cache = caches.default;
+    const resp = await cache.match(_DOMAIN_STATE_CACHE_KEY);
+    if (resp) return await resp.json();
+  } catch {}
+  return { lastComplete: 0 };
+}
+
+async function _putDomainState(state) {
+  try {
+    const cache = caches.default;
+    const resp = new Response(JSON.stringify(state), {
+      headers: { 'Content-Type': 'application/json', 'Cache-Control': 'max-age=172800' },
+    });
+    await cache.put(_DOMAIN_STATE_CACHE_KEY, resp);
+  } catch {}
+}
+
+async function _handleScheduledDomainUpdate(env) {
+  if (!env?.ES_CACHE) return;
+
+  const state = await _getDomainState();
+  if (state.lastComplete && Date.now() - state.lastComplete < _DOMAIN_COOLDOWN_MS) return;
+
+  try {
+    await _resolveDomains(env);
+    await _putDomainState({ lastComplete: Date.now() });
+  } catch { /* resolve failed — try next cron run */ }
 }
