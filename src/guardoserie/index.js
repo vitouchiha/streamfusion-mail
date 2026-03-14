@@ -65,7 +65,7 @@ async function _cfWorkerFetch(url) {
         workerUrl.searchParams.set('url', cfTargetUrl);
         const headers = { 'Accept': 'text/html, */*' };
         if (cfAuth) headers['x-worker-auth'] = cfAuth;
-        const resp = await fetch(workerUrl.toString(), { headers, signal: AbortSignal.timeout(15000) });
+        const resp = await fetch(workerUrl.toString(), { headers, signal: AbortSignal.timeout(8000) });
         const body = await resp.text();
         if (!resp.ok || body.includes('Just a moment')) return null;
         return {
@@ -99,7 +99,7 @@ async function _browserFetch(url) {
         }
         try {
             await page.setUserAgent(USER_AGENT);
-            await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 20000 });
+            await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 12000 });
             // Wait for Cloudflare challenge to resolve (if present)
             const isCF = await page.evaluate(() => document.title.includes('Just a moment'));
             if (isCF) {
@@ -159,7 +159,7 @@ async function _webshareFetch(url, mergedHeaders) {
                 method: 'GET',
                 headers: { ...mergedHeaders, Host: parsed.host },
                 agent,
-                timeout: 20000,
+                timeout: 10000,
             };
             const req = mod.request(reqOpts, (res) => {
                 // Follow redirects
