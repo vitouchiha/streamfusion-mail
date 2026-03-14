@@ -1,3 +1,33 @@
+## [3.0.58] - 2026-03-14
+
+### Added
+- **Eurostreaming MaxStream via Uprot** — I link MaxStream su Eurostreaming ora passano attraverso `extractUprot` con captcha auto-risolto, invece di fallire silenziosamente. Tutti i link `uprot.net/msf/` vengono riconosciuti e processati.
+
+### Fixed
+- **Commento DL Eurostreaming** — Aggiornato commento obsoleto ("captcha not supported") ora che uprot è completamente gestito.
+- **Commento CB01 extractFromResolvedUrl** — Aggiornato da "skip (captcha required)" a "extractUprot (captcha auto-solved)".
+
+---
+
+## [3.0.57] - 2026-03-14
+
+### Added
+- **CB01 MaxStream/Uprot nelle serie** — `extractEpisodeStreams` ora gestisce link `uprot.net` direttamente (chiamando `extractUprot` → captcha auto → MaxStream HLS), non solo link stayonline e maxstream.
+- **Supporto /msfi/ bypass** — Nuova logica per le pagine bypass `/msfi/` che usano il pulsante `C o n t i n u e` minuscolo (senza `buttok`), diverso dal layout `/msf/`.
+
+### Fixed
+- **Uprot honeypot stripping** — `_bypassUprot` e `_extractMseiUprot` ora rimuovono blocchi `display:none` e commenti HTML prima di cercare il link redirect, evitando i link decoy/honeypot sulle pagine bypass.
+- **CB01 sp-head regex** — Corretto regex `class="sp-head"` → `class="sp-head[^"]*"` per matchare varianti come `class="sp-head unfolded"` (usato da Will & Grace e altre serie con stagioni raggruppate).
+
+---
+
+## [3.0.56] - 2026-03-14
+
+### Added
+- **Uprot /msei/ token-based captcha** — Nuovo handler `_extractMseiUprot()` per i link episodio via stayonline che usano captcha a 4 cifre con form token-based (no PHPSESSID session). Ogni URL richiede soluzione captcha individuale.
+
+---
+
 ## [3.0.49] - 2026-03-13
 
 ### Fixed
