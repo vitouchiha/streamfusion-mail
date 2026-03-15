@@ -30,6 +30,16 @@
  *     CF_WORKER_AUTH = <your AUTH_TOKEN value>  (optional, but recommended)
  */
 
+/**
+ * Normalize any guardoserie domain variant → .digital (canonical KV domain).
+ * Regex catches ALL TLDs (.website, .best, .horse, .surf, .bar, .blog, etc.)
+ * so a domain change only needs updating ALLOWED_HOSTS + _KV_CACHEABLES, not
+ * the normalization logic.
+ */
+function _normalizeGsUrl(url) {
+  return url.replace(/guardoserie\.[a-z]+/gi, 'guardoserie.digital');
+}
+
 export default {
   // ── Scheduled cron: auto-refresh Eurostreaming cache + domain updates + uprot + GuardoSerie ──
   async scheduled(event, env, ctx) {
@@ -91,8 +101,7 @@ export default {
         for (const { url: pageUrl, html } of pages) {
           if (!pageUrl || !html) continue;
           // Normalize to .digital for consistency with provider's _cfWorkerFetch
-          const normUrl = pageUrl.replace('guardoserie.website', 'guardoserie.digital')
-                                 .replace('guardoserie.best', 'guardoserie.digital');
+          const normUrl = _normalizeGsUrl(pageUrl);
           const kvKey = `p:${normUrl}`;
           const kvVal = JSON.stringify({ b: html, s: 200, l: '', ck: '', ct: 'text/html; charset=UTF-8', t: Date.now() });
           await env.ES_CACHE.put(kvKey, kvVal, { expirationTtl: 172800 }); // 48h
@@ -109,6 +118,48 @@ export default {
         const index = await env.ES_CACHE.get('gs:titles', 'json');
         if (index) return _json(index);
         return _json({ error: 'Index not built yet' }, 404);
+      } catch (e) { return _json({ error: e.message }, 500); }
+    }
+
+    // ── KissKH meta KV cache ─────────────────────────────────────────────
+    // GET  ?kk_meta={dramaId}         → read meta from KV
+    // POST ?kk_meta={dramaId} + body  → store meta in KV (7 days TTL)
+    if (url.searchParams.get('kk_meta')) {
+      if (!env?.ES_CACHE) return _json({ error: 'KV not available' }, 500);
+      const kid = url.searchParams.get('kk_meta');
+      const kvKey = `kk:meta:${kid}`;
+      if (request.method === 'POST') {
+        try {
+          const body = await request.json();
+          await env.ES_CACHE.put(kvKey, JSON.stringify(body), { expirationTtl: 604800 });
+          return _json({ ok: true });
+        } catch (e) { return _json({ error: e.message }, 500); }
+      }
+      try {
+        const data = await env.ES_CACHE.get(kvKey, 'json');
+        if (data) return _json(data);
+        return _json(null, 404);
+      } catch (e) { return _json({ error: e.message }, 500); }
+    }
+
+    // ── KissKH subtitle KV cache ─────────────────────────────────────────
+    // GET  ?kk_sub={serieId}:{episodeId}         → read subs from KV
+    // POST ?kk_sub={serieId}:{episodeId} + body  → store subs in KV (30 days TTL)
+    if (url.searchParams.get('kk_sub')) {
+      if (!env?.ES_CACHE) return _json({ error: 'KV not available' }, 500);
+      const subKey = url.searchParams.get('kk_sub');
+      const kvKey = `kk:sub:${subKey}`;
+      if (request.method === 'POST') {
+        try {
+          const body = await request.json();
+          await env.ES_CACHE.put(kvKey, JSON.stringify(body), { expirationTtl: 2592000 });
+          return _json({ ok: true });
+        } catch (e) { return _json({ error: e.message }, 500); }
+      }
+      try {
+        const data = await env.ES_CACHE.get(kvKey, 'json');
+        if (data) return _json(data);
+        return _json(null, 404);
       } catch (e) { return _json({ error: e.message }, 500); }
     }
 
@@ -815,14 +866,14 @@ async function _handleScheduledGsWarm(env) {
       const key = rawTitle.toLowerCase();
       if (!titles[key]) titles[key] = [];
       if (!titles[key].some(e => e.slug === slug)) {
-        titles[key].push({ slug, url: m[1] });
+        titles[key].push({ slug });
         count++;
       }
       // Also index by slug
       const slugKey = slug.replace(/-/g, ' ');
       if (slugKey !== key) {
         if (!titles[slugKey]) titles[slugKey] = [];
-        if (!titles[slugKey].some(e => e.slug === slug)) titles[slugKey].push({ slug, url: m[1] });
+        if (!titles[slugKey].some(e => e.slug === slug)) titles[slugKey].push({ slug });
       }
     }
 

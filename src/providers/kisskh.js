@@ -42,6 +42,35 @@ const metaCache    = new TTLCache({ ttl: 30 * 60_000, maxSize: 500 });
 const streamCache  = new TTLCache({ ttl: 2 * 60 * 60_000, maxSize: 1000 });
 const subCache     = new TTLCache({ ttl: 24 * 60 * 60_000, maxSize: 500 });
 
+// ─── KV persistence (survives Vercel cold starts) ─────────────────────────────
+
+async function _kvGet(param, key) {
+  const base = (process.env.CF_WORKER_URL || '').trim();
+  if (!base) return null;
+  try {
+    const u = new URL(base.replace(/\/$/, ''));
+    u.searchParams.set(param, key);
+    const headers = {};
+    const auth = (process.env.CF_WORKER_AUTH || '').trim();
+    if (auth) headers['x-worker-auth'] = auth;
+    const resp = await axios.get(u.toString(), { headers, timeout: 3000, validateStatus: () => true });
+    if (resp.status === 200 && resp.data) return typeof resp.data === 'string' ? JSON.parse(resp.data) : resp.data;
+  } catch { /* KV read fail — not critical */ }
+  return null;
+}
+
+function _kvPut(param, key, data) {
+  const base = (process.env.CF_WORKER_URL || '').trim();
+  if (!base) return;
+  const u = new URL(base.replace(/\/$/, ''));
+  u.searchParams.set(param, key);
+  const headers = { 'Content-Type': 'application/json' };
+  const auth = (process.env.CF_WORKER_AUTH || '').trim();
+  if (auth) headers['x-worker-auth'] = auth;
+  // Fire-and-forget — don't block the response
+  axios.post(u.toString(), data, { headers, timeout: 5000 }).catch(() => {});
+}
+
 // ─── Shared axios headers ─────────────────────────────────────────────────────
 
 /** Base headers without CF cookie — fast, no Puppeteer */
@@ -454,6 +483,15 @@ async function getMeta(id, config = {}) {
   }
 
   const serieId = id.replace(/^kisskh_/, '');
+
+  // ── KV fallback (survives Vercel cold starts) ─────────────────────────
+  const kvMeta = await _kvGet('kk_meta', serieId);
+  if (kvMeta) {
+    log.info('meta from KV', { id });
+    metaCache.set(id, kvMeta);
+    return { meta: kvMeta };
+  }
+
   const dramaUrls = [
     `${API_BASE}/DramaList/Drama/${serieId}?isq=false`,
     `https://kisskh.co/api/DramaList/Drama/${serieId}?isq=false`,
@@ -530,6 +568,7 @@ async function getMeta(id, config = {}) {
     }
 
     metaCache.set(id, meta);
+    _kvPut('kk_meta', serieId, meta); // persist to KV (fire-and-forget)
     return { meta };
   } catch (err) {
     log.error(`getMeta failed: ${err.message}`, { id });
@@ -1417,6 +1456,14 @@ async function _getSubtitlesFromApiUrl(subApiUrl, serieId, episodeId) {
   const cached = subCache.get(cacheKey);
   if (cached) return cached;
 
+  // ── KV fallback (decrypted subs survive Vercel cold starts) ───────────
+  const kvSubs = await _kvGet('kk_sub', `${serieId}:${episodeId}`);
+  if (kvSubs) {
+    log.info('subs from KV', { serieId, episodeId });
+    subCache.set(cacheKey, kvSubs);
+    return kvSubs;
+  }
+
   if (!subApiUrl) {
     log.warn('no subtitle API endpoint found', { serieId, episodeId });
     return [];
@@ -1474,6 +1521,7 @@ async function _getSubtitlesFromApiUrl(subApiUrl, serieId, episodeId) {
   }
 
   subCache.set(cacheKey, decoded);
+  if (decoded.length > 0) _kvPut('kk_sub', `${serieId}:${episodeId}`, decoded); // persist to KV
   return decoded;
 }
 

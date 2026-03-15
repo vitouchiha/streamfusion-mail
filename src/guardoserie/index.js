@@ -59,8 +59,8 @@ async function _cfWorkerFetch(url) {
     if (!cfBase) return null;
     const cfAuth = (process.env.CF_WORKER_AUTH || '').trim();
     try {
-        // Use .digital domain (already in CF Worker's ALLOWED_HOSTS, auto-redirects to .best)
-        const cfTargetUrl = url.replace('guardoserie.website', 'guardoserie.digital').replace('guardoserie.best', 'guardoserie.digital');
+        // Normalize any guardoserie variant → .digital (canonical KV domain)
+        const cfTargetUrl = url.replace(/guardoserie\.[a-z]+/gi, 'guardoserie.digital');
         const workerUrl = new URL(cfBase.replace(/\/$/, ''));
         workerUrl.searchParams.set('url', cfTargetUrl);
         const headers = { 'Accept': 'text/html, */*' };

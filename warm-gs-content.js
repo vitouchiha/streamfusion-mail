@@ -21,7 +21,8 @@ const path = require('path');
 
 // ── Config ──────────────────────────────────────────────────────────────────
 const BASE = 'https://guardoserie.website';
-const DIGITAL_BASE = 'https://guardoserie.digital'; // normalized domain for KV keys
+// Normalize any guardoserie variant → .digital (canonical KV domain)
+function _normalizeGsUrl(url) { return url.replace(/guardoserie\.[a-z]+/gi, 'guardoserie.digital'); }
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
 const HEADERS = {
   'User-Agent': UA,
@@ -81,7 +82,7 @@ async function pushToKv(pages) {
   if (CF_WORKER_AUTH) headers['x-worker-auth'] = CF_WORKER_AUTH;
 
   const body = pages.map(p => ({
-    url: p.url.replace(BASE, DIGITAL_BASE),
+    url: _normalizeGsUrl(p.url),
     html: p.html 
   }));
 
