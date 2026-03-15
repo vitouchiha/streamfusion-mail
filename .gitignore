@@ -10,10 +10,11 @@ stack.env
 
 # Build & cache
 dist/
-cache/
+/cache/
 data/
 .vercel
 .wrangler/
+!src/cache/
 
 # OS files
 .DS_Store
