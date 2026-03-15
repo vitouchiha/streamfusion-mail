@@ -552,7 +552,7 @@ app.get('/diag/eurostreaming', async (req, res) => {
     const ctx = { imdbId, primaryTitle: req.query.title || '', titleCandidates: req.query.title ? [req.query.title] : [] };
     const streams = await Promise.race([
       es.getStreams(imdbId, 'series', season, episode, ctx),
-      new Promise((_, rej) => setTimeout(() => rej(new Error('timeout:20s')), 20000)),
+      new Promise((_, rej) => setTimeout(() => rej(new Error('timeout:25s')), 25000)),
     ]);
     diag.steps.push({ step: 'getStreams', ms: Date.now() - t0, count: streams.length, streams: streams.map(s => ({ name: s.name, url: (s.url || '').substring(0, 120) })) });
   } catch (err) {
