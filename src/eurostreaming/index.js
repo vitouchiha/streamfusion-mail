@@ -785,40 +785,40 @@ async function getStreams(id, type, season, episode, providerContext = null) {
     const effectiveEpisode = Number.isInteger(episode) && episode > 0 ? episode : 1;
 
     // Resolve title + year
+    // Priority: context title (already resolved by orchestrator) → TMDB → candidates
     let showname = '';
     let year = '';
 
-    const contextTmdbId = providerContext && /^\d+$/.test(String(providerContext.tmdbId || ''))
-      ? String(providerContext.tmdbId)
-      : null;
-    const contextImdbId = providerContext && /^tt\d+$/i.test(String(providerContext.imdbId || ''))
-      ? String(providerContext.imdbId)
-      : null;
-
-    let tmdbId = contextTmdbId;
-
-    // Convert IMDb → TMDB if needed
-    if (!tmdbId && contextImdbId) {
-      tmdbId = String((await getTmdbIdFromImdb(contextImdbId)) || '') || null;
-    }
-    if (!tmdbId && String(id).startsWith('tmdb:')) {
-      tmdbId = String(id).replace('tmdb:', '').split(':')[0];
-    }
-
-    // Fetch title + year from TMDB
-    if (tmdbId) {
-      const info = await getTitleAndYear(tmdbId, 'tv');
-      if (info) {
-        showname = info.title;
-        year = info.year;
-      }
-    }
-
-    // Fallback to context title candidates
-    if (!showname && providerContext) {
+    // 1. Try context title first (avoids redundant TMDB API call, saves 3-5s)
+    if (providerContext) {
       showname = String(providerContext.primaryTitle || '').trim();
       if (!showname && Array.isArray(providerContext.titleCandidates)) {
         showname = String(providerContext.titleCandidates[0] || '').trim();
+      }
+    }
+
+    // 2. Fallback to TMDB only if no context title available
+    if (!showname) {
+      const contextTmdbId = providerContext && /^\d+$/.test(String(providerContext.tmdbId || ''))
+        ? String(providerContext.tmdbId)
+        : null;
+      const contextImdbId = providerContext && /^tt\d+$/i.test(String(providerContext.imdbId || ''))
+        ? String(providerContext.imdbId)
+        : null;
+
+      let tmdbId = contextTmdbId;
+      if (!tmdbId && contextImdbId) {
+        tmdbId = String((await getTmdbIdFromImdb(contextImdbId)) || '') || null;
+      }
+      if (!tmdbId && String(id).startsWith('tmdb:')) {
+        tmdbId = String(id).replace('tmdb:', '').split(':')[0];
+      }
+      if (tmdbId) {
+        const info = await getTitleAndYear(tmdbId, 'tv');
+        if (info) {
+          showname = info.title;
+          year = info.year;
+        }
       }
     }
 
