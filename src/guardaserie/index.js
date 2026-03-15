@@ -129,10 +129,22 @@ function collectEpisodeLinks(showHtml, season, episode) {
   ];
 
   for (const episodeId of episodeIds) {
-    const blockRegex = new RegExp(`<li[^>]*>[\\s\\S]*?<a[^>]+id="${episodeId}"[\\s\\S]*?<\\/li>`, "i");
-    const blockMatch = showHtml.match(blockRegex);
-    if (!blockMatch) continue;
-    for (const match of blockMatch[0].matchAll(/data-link="([^"]+)"/g)) {
+    const idMarker = `id="${episodeId}"`;
+    const anchorIdx = showHtml.indexOf(idMarker) !== -1
+      ? showHtml.indexOf(idMarker)
+      : showHtml.toLowerCase().indexOf(idMarker.toLowerCase());
+    if (anchorIdx === -1) continue;
+
+    const before = showHtml.substring(Math.max(0, anchorIdx - 2000), anchorIdx);
+    const liOpenPos = before.lastIndexOf('<li');
+    if (liOpenPos === -1) continue;
+    const blockStart = Math.max(0, anchorIdx - 2000) + liOpenPos;
+
+    const liCloseIdx = showHtml.indexOf('</li>', anchorIdx);
+    if (liCloseIdx === -1) continue;
+
+    const block = showHtml.substring(blockStart, liCloseIdx + 5);
+    for (const match of block.matchAll(/data-link="([^"]+)"/g)) {
       const normalized = normalizeEpisodeLink(match[1]);
       if (normalized) links.add(normalized);
     }
