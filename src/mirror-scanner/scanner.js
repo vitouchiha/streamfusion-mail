@@ -50,6 +50,28 @@ const PROVIDER_TLD_MAP = {
     tlds: ['actor', 'city', 'best', 'coffee', 'computer', 'agency', 'buzz', 'art', 'prof', 'bond'],
     fingerprint: 'streaming community',
   },
+  guardaserie: {
+    base: 'guardaserie',
+    altBases: ['guardaserietv'],
+    tlds: ['skin', 'cfd', 'click', 'hair', 'bond', 'observer', 'online', 'site', 'top', 'life', 'fun'],
+    fingerprint: 'guardaserie',
+  },
+  loonex: {
+    base: 'loonex',
+    tlds: ['eu', 'it', 'me', 'cc', 'live', 'pro', 'tv', 'online', 'site', 'fun'],
+    fingerprint: 'loonex',
+  },
+  toonitalia: {
+    base: 'toonitalia',
+    tlds: ['xyz', 'org', 'com', 'cc', 'co', 'live', 'fun', 'site', 'online', 'top'],
+    fingerprint: 'toonitalia',
+  },
+  guardaflix: {
+    base: 'guardaflix',
+    altBases: ['guardaplay'],
+    tlds: ['space', 'online', 'site', 'life', 'fun', 'top', 'click', 'live', 'cam'],
+    fingerprint: 'guardaflix',
+  },
 };
 
 // ── State ─────────────────────────────────────────────────────────────────────
