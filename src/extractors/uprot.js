@@ -559,7 +559,7 @@ async function _resolveViaCfWorker(uprotUrl) {
     });
     console.log('[Uprot] Delegating to CF Worker:', uprotUrl);
     const resp = await fetch(`${CF_WORKER_URL}/?${params}`, {
-      signal: AbortSignal.timeout(15000),
+      signal: AbortSignal.timeout(18000),
       headers: { 'User-Agent': UA },
     });
     if (!resp.ok) {
