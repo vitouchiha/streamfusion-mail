@@ -369,12 +369,12 @@ export default {
       'uprot.net', 'www.uprot.net',
       'uprots.me', 'www.uprots.me',
       'maxstream.video', 'www.maxstream.video',
-      'guardoserie.digital', 'www.guardoserie.digital',
-      'guardoserie.best', 'www.guardoserie.best',
-      'guardoserie.website', 'www.guardoserie.website',
       'animeunity.so', 'www.animeunity.so',
     ]);
-    if (!ALLOWED_HOSTS.has(parsedTarget.hostname)) {
+    // guardoserie.* — any TLD is auto-allowed (domain changes frequently)
+    const hostBare = parsedTarget.hostname.replace(/^www\./, '');
+    const isAllowed = ALLOWED_HOSTS.has(parsedTarget.hostname) || /^guardoserie\.[a-z]+$/i.test(hostBare);
+    if (!isAllowed) {
       return _json({ error: `Host ${parsedTarget.hostname} is not proxied by this Worker` }, 403);
     }
 
@@ -483,9 +483,10 @@ export default {
     }
 
     // ── KV cache: domains where responses are cached globally ──────────────
-    const _KV_CACHEABLES = { 'eurostream.ing': 86400, 'eurostreamings.life': 86400, 'clicka.cc': 86400, 'deltabit.co': 3600, 'guardoserie.digital': 86400, 'guardoserie.best': 86400, 'guardoserie.website': 86400 };
+    const _KV_CACHEABLES = { 'eurostream.ing': 86400, 'eurostreamings.life': 86400, 'clicka.cc': 86400, 'deltabit.co': 3600 };
     const hostNorm = parsedTarget.hostname.replace(/^www\./, '');
-    const kvTtl = _KV_CACHEABLES[hostNorm] || 0;
+    // guardoserie.* — any TLD gets 86400 TTL automatically
+    const kvTtl = _KV_CACHEABLES[hostNorm] || (/^guardoserie\.[a-z]+$/i.test(hostNorm) ? 86400 : 0);
     const isPost = url.searchParams.get('method') === 'POST';
     // Only cache GET requests (POST = captcha submissions, form posts)
     const kvKey = kvTtl && !isPost ? `p:${targetUrl}` : null;
@@ -760,7 +761,12 @@ async function _handleScheduledWarm(env) {
   // Don't refresh more often than every 24h
   if (state.lastComplete && Date.now() - state.lastComplete < _WARM_COOLDOWN_MS) return;
 
-  const baseUrl = 'https://eurostream.ing';
+  // Read active domain from KV (auto-updated by _handleScheduledDomainUpdate)
+  let baseUrl = 'https://eurostream.ing';
+  try {
+    const domainData = await env.ES_CACHE.get('domains:urls', 'json');
+    if (domainData?.eurostreaming) baseUrl = domainData.eurostreaming.replace(/\/$/, '');
+  } catch { /* fallback to default */ }
   let { nextPage, titles } = state;
   if (!titles || typeof titles !== 'object') titles = {};
 
@@ -834,7 +840,12 @@ async function _handleScheduledGsWarm(env) {
 
   if (state.lastComplete && Date.now() - state.lastComplete < _GS_COOLDOWN_MS) return;
 
-  const BASE = 'https://guardoserie.website';
+  // Read active domain from KV (auto-updated by _handleScheduledDomainUpdate)
+  let BASE = 'https://guardoserie.website';
+  try {
+    const domainData = await env.ES_CACHE.get('domains:urls', 'json');
+    if (domainData?.guardoserie) BASE = domainData.guardoserie.replace(/\/$/, '');
+  } catch { /* fallback to default */ }
   let { nextPage, titles } = state;
   if (!titles || typeof titles !== 'object') titles = {};
 

@@ -20,7 +20,12 @@ const fs = require('fs');
 const path = require('path');
 
 // ── Config ──────────────────────────────────────────────────────────────────
-const BASE = 'https://guardoserie.website';
+// Read active domain from provider_urls.json (auto-updated by CF Worker cron)
+let BASE = 'https://guardoserie.website';
+try {
+  const urls = JSON.parse(fs.readFileSync(path.resolve(__dirname, 'provider_urls.json'), 'utf-8'));
+  if (urls?.guardoserie) BASE = urls.guardoserie.replace(/\/$/, '');
+} catch { /* fallback to default */ }
 // Normalize any guardoserie variant → .digital (canonical KV domain)
 function _normalizeGsUrl(url) { return url.replace(/guardoserie\.[a-z]+/gi, 'guardoserie.digital'); }
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
