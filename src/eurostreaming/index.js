@@ -236,7 +236,8 @@ async function resolveHostLink(href) {
         current.includes('deltabit') ||
         current.includes('mixdrop') ||
         current.includes('m1xdrop') ||
-        current.includes('maxstream')
+        current.includes('maxstream') ||
+        current.includes('uprot')
       ) {
         return current;
       }
