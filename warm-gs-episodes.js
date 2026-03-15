@@ -11,13 +11,14 @@
  *
  * Run from local machine (residential IP — CF blocks cloud IPs).
  *
- *   node warm-gs-episodes.js [--limit N] [--continue] [--slug breaking-bad]
+ *   node warm-gs-episodes.js [--limit N] [--continue] [--slug breaking-bad] [--deploy]
  *
  * Options:
  *   --limit N      Max series to process (default: all)
  *   --continue     Resume from existing gs-episodes-index.json
  *   --slug SLUG    Process specific series only (comma-separated)
  *   --delay MS     Delay between requests (default: 200)
+ *   --deploy       After warm-up, git add + commit + push to deploy the cache
  */
 
 'use strict';
@@ -48,6 +49,7 @@ const LIMIT = Number(getArg('limit')) || Infinity;
 const CONTINUE = hasFlag('continue');
 const ONLY_SLUGS = getArg('slug')?.split(',').map(s => s.trim()).filter(Boolean) || null;
 const DELAY = Number(getArg('delay')) || 200;
+const DEPLOY = hasFlag('deploy');
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -278,6 +280,45 @@ async function main() {
   const sizeKB = (fs.statSync(OUT_PATH).size / 1024).toFixed(1);
   console.log(`\n✅ Done! ${Object.keys(episodesIndex).length} episodes cached (${sizeKB} KB)`);
   console.log(`   New episodes this run: ${newEpisodes}`);
+
+  return newEpisodes;
 }
 
-main().catch(e => { console.error('Fatal:', e); process.exit(1); });
+// ── Git deploy ───────────────────────────────────────────────────────────────
+const { execSync } = require('child_process');
+
+async function gitDeploy() {
+  const cwd = __dirname;
+  const run = (cmd) => {
+    console.log(`  $ ${cmd}`);
+    return execSync(cmd, { cwd, encoding: 'utf-8', stdio: ['pipe', 'pipe', 'pipe'] }).trim();
+  };
+
+  // Check if there are actual changes
+  const diff = run('git diff --stat gs-episodes-index.json');
+  if (!diff) {
+    console.log('📦 No changes in gs-episodes-index.json, skipping deploy.');
+    return;
+  }
+
+  console.log('\n🚀 Deploying updated episode cache...');
+  run('git add gs-episodes-index.json');
+
+  const count = Object.keys(JSON.parse(fs.readFileSync(OUT_PATH, 'utf-8'))).length;
+  const msg = `chore: update gs-episodes-index (${count} episodes)`;
+  run(`git commit -m "${msg}"`);
+
+  const pushOut = run('git push origin master');
+  console.log(pushOut || '  (pushed)');
+  console.log('✅ Deploy complete — Vercel will pick up the new cache.');
+}
+
+main()
+  .then(async (newEps) => {
+    if (DEPLOY && newEps > 0) {
+      await gitDeploy();
+    } else if (DEPLOY) {
+      console.log('📦 No new episodes, skipping deploy.');
+    }
+  })
+  .catch(e => { console.error('Fatal:', e); process.exit(1); });
