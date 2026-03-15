@@ -12,6 +12,7 @@
           "es-titles-index.json",
           "gs-cache/**",
           "gs-titles-index.json",
+          "gs-episodes-index.json",
           "kk-cache/**",
           "kk-titles-index.json",
           "rama-cache/**",

@@ -37,6 +37,7 @@ deploy-workers.js
 !provider_urls.json
 !es-titles-index.json
 !gs-titles-index.json
+!gs-episodes-index.json
 !kk-titles-index.json
 !rama-titles-index.json
 !loonex-titles-index.json
