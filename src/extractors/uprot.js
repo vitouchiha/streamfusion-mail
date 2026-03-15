@@ -559,7 +559,7 @@ async function _resolveViaCfWorker(uprotUrl) {
     });
     console.log('[Uprot] Delegating to CF Worker:', uprotUrl);
     const resp = await fetch(`${CF_WORKER_URL}/?${params}`, {
-      signal: AbortSignal.timeout(45000),
+      signal: AbortSignal.timeout(15000),
       headers: { 'User-Agent': UA },
     });
     if (!resp.ok) {
@@ -596,10 +596,9 @@ async function extractUprot(uprotUrl) {
     // /msfld/ is a folder listing — not directly extractable (handled by CB01 provider)
     if (link.includes('/msfld/')) return null;
 
-    // Primary strategy: delegate to CF Worker — SKIP if PROXY_URL is set
-    // because uprot.net blocks all datacenter IPs (Vercel, CF Workers).
-    // When proxy is available, local resolution via proxy is faster and more reliable.
-    const cfResult = (process.env.PROXY_URL || '').trim() ? null : await _resolveViaCfWorker(link);
+    // Primary strategy: delegate to CF Worker (persistent cookie cache, more reliable
+    // than Vercel serverless which loses cookies on cold starts).
+    const cfResult = await _resolveViaCfWorker(link);
     if (cfResult) return cfResult;
 
     // Fallback: local resolution
