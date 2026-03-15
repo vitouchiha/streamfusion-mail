@@ -716,6 +716,48 @@ app.get('/health', (req, res) => {
   res.json({ status: 'ok', version: manifest.version, ts: new Date().toISOString(), providersLoaded: !!_providersApi, bootstrapError: _providersBootstrapError });
 });
 
+// Temporary debug endpoint for guardoserie diagnostics — REMOVE after fixing
+app.get('/debug/gs', async (req, res) => {
+  const diag = {};
+  try {
+    const fs = require('fs');
+    const p = require('path');
+    const indexPath = p.resolve(__dirname, 'gs-titles-index.json');
+    diag.indexExists = fs.existsSync(indexPath);
+    if (diag.indexExists) {
+      const idx = JSON.parse(fs.readFileSync(indexPath, 'utf-8'));
+      diag.indexEntries = Object.keys(idx).length;
+    }
+    diag.cfWorkerUrl = (process.env.CF_WORKER_URL || '').substring(0, 60);
+    diag.cfWorkerUrls = (process.env.CF_WORKER_URLS || '').substring(0, 120);
+    diag.hasCfWorker = !!((process.env.CF_WORKER_URL || process.env.CF_WORKER_URLS || '').trim());
+
+    // Test CF Worker fetch
+    const { getProxyWorker } = require('./src/utils/cfWorkerPool');
+    const w = getProxyWorker();
+    diag.workerPicked = w ? w.url.substring(0, 60) : null;
+    if (w) {
+      const t0 = Date.now();
+      const testUrl = new URL(w.url);
+      testUrl.searchParams.set('url', 'https://guardoserie.website/');
+      const headers = { 'Accept': 'text/html, */*' };
+      if (w.auth) headers['x-worker-auth'] = w.auth;
+      const r = await fetch(testUrl.toString(), { headers, signal: AbortSignal.timeout(10000) });
+      const body = await r.text();
+      diag.cfWorkerTest = { status: r.status, len: body.length, ms: Date.now() - t0, hasSerie: body.includes('/serie/') };
+    }
+
+    // Quick getStreams test
+    const guardoserie = require('./src/guardoserie/index');
+    const t1 = Date.now();
+    const streams = await guardoserie.getStreams('tt0903747', 'series', 1, 1, { addonBaseUrl: 'https://streamfusion-mail.vercel.app' });
+    diag.getStreams = { count: streams?.length || 0, ms: Date.now() - t1 };
+  } catch (e) {
+    diag.error = e.message;
+  }
+  res.json(diag);
+});
+
 app.get('/api/status', (req, res) => {
   res.json({
     providers: ["Easystreams", "Baciasiatici", "Drammatica", "GuardaSerie", "KissKH"],
